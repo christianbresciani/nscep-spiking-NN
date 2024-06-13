@@ -1,3 +1,4 @@
+import gc
 import torch.nn as nn
 import snntorch as snn
 import torch
@@ -8,44 +9,67 @@ import numpy as np
 from sklearn.metrics import accuracy_score
 
 class Net(nn.Module):
-   def __init__(self, input_dim, hidden_dim=10, output_dim=2, num_steps=5, device=None):
+   def __init__(self, input_dim, hidden_dim, output_dim, num_steps, reset_mechanism='zero', device=None):
       super().__init__()
+      assert reset_mechanism in ['zero', 'subtract'], "reset_mechanism must be either 'zero' or 'subtract'"
+
       self.hidden_dim = hidden_dim
       self.num_outputs = output_dim
       self.num_steps = num_steps
       self.device = device
 
       # initialize layers
-      self.antennas_fuse = nn.Conv1d(4, 1, 1)
+      self.antennas_fuse = nn.Conv2d(4, 1, (1,1))
       self.hidden_linear = nn.Linear(input_dim, hidden_dim)
-      self.snn = snn.Leaky(.95, reset_mechanism='zero')
-      self.time_fuse = nn.Conv1d(90, 1, 1)
+      self.snn1 = snn.Leaky(.95, reset_mechanism=reset_mechanism) #, learn_beta=True, learn_threshold=True, reset_delay=False
+      self.snn2 = snn.Leaky(.95, reset_mechanism=reset_mechanism) #, learn_beta=True, learn_threshold=True, reset_delay=False
+
+      # self.time_fuse = nn.Conv1d(num_steps, 1, 1)
       self.output_linear = nn.Linear(hidden_dim, output_dim)
       self.softmax = nn.Softmax(dim=1)
 
    def forward(self, x):
-      mem = self.snn.init_leaky()
-      # mem2 = self.lif2.init_leaky()
+      mem = self.snn1.init_leaky()
+      mem2 = self.snn2.init_leaky()
 
-      spk_rec = []  # Record the output trace of spikes
-      # mem1_rec = []  # Record the output trace of membrane potential
+      # spk_rec = []  # Record the output trace of spikes
+
+      if len(x.shape) < 4: x = x.unsqueeze(0)
+
+      x = x.permute(0, 3, 1, 2) # [batch, antennas, time, freq]
+      x = self.antennas_fuse(x) # fuse the 4 antennas into 1 channel
+      x = x.squeeze(1)
+
+      if x.shape[1] != self.num_steps:
+         x = x.view(x.shape[0], -1, self.num_steps, x.shape[2]) # [batch, time/steps, steps, freq]
 
       for step in range(self.num_steps):
-         if len(x.shape) < 4: x = x.unsqueeze(0)
-         input = x[:,step,:]
-         sn_input = self.antennas_fuse(input.view(input.shape[0], 4, -1)) # fuse the 4 antennas into 1 channel
-         sn_input = sn_input.squeeze(1)
+         sn_input = x[:,:,step,:]
+         # sn_input = self.antennas_fuse(input.reshape(input.shape[0], input.shape[-1], input.shape[1], -1)) # fuse the 4 antennas into 1 channel
+         
+         # sn_input = self.hidden_linear(sn_input)
 
-         sn_input = self.hidden_linear(sn_input)
-         spk, mem = self.snn(sn_input, mem)
-         # sn_input = self.hidden_linear(spk)
+         spk, mem = self.snn1(sn_input, mem)
 
-         spk_rec.append(spk)
+         # spk = self.hidden_linear(spk)
+         # spk, mem2 = self.snn2(spk, mem2)
+
+         # spk_rec.append(spk)
          # mem1_rec.append(mem1)
 
-      spk_rec = torch.stack(spk_rec, dim=1)
-      fused_spikes = self.time_fuse(spk_rec)
-      out = self.output_linear(fused_spikes.squeeze(1))
+      # spk_rec = torch.stack(spk_rec, dim=2)
+      # fused_spikes = self.time_fuse(spk_rec)
+      # out = self.output_linear(fused_spikes.squeeze(1))
+
+      # hidden = spk_rec[-1]
+      hidden = self.hidden_linear(spk)
+
+      # spk2_rec = []
+      for step in range(hidden.shape[1]):
+         spk2, mem2 = self.snn2(hidden[:,step,:], mem2)
+         # spk2_rec.append(spk2)
+
+      out = self.output_linear(spk2)
 
       return self.softmax(out)
 
@@ -56,7 +80,7 @@ class Net(nn.Module):
       accuracies = []
       best_val_loss = np.Inf
       best_ep = 0
-      best_model = copy.deepcopy(self.state_dict())
+      # best_model = copy.deepcopy(self.state_dict())
 
       for ep in tqdm(range(epochs)):
          self.train()
@@ -69,7 +93,7 @@ class Net(nn.Module):
 
             with autocast():
                logits = self(data)
-               labels = nn.functional.one_hot(labels.to(torch.int64), num_classes=self.num_outputs).float()
+               labels = labels.float()
                loss = self.mse_loss(labels, logits, ep, num_epochs_annealing)
 
             ep_loss += loss
@@ -82,24 +106,26 @@ class Net(nn.Module):
          train_losses.append(ep_loss/len(train_data))
 
          # Evaluation
-         val_loss, accuracy = self.eval_model(val_data, ep, num_epochs_annealing)
-         print(f"Epoch {ep}| train_loss: {np.round(train_losses[-1].cpu().detach(), 4)}, val loss: {np.round(val_loss.cpu(),4)}, accuracy: {np.round(accuracy,4)}")
+         val_loss = self.eval_model(val_data, ep, num_epochs_annealing)
+         print(f"Epoch {ep}| val loss: {np.round(val_loss.cpu(),4)}")#, accuracy: {np.round(accuracy,4)}")
 
-         accuracies.append(accuracy)
+         # accuracies.append(accuracy)
          val_losses.append(val_loss)
 
          if val_loss < best_val_loss:
             best_val_loss = val_loss
-            best_model = copy.deepcopy(self.state_dict())
+            # best_model = copy.deepcopy(self.state_dict())
             best_ep = ep
          
-         if ep > epochs/2 and ep - best_ep >= patience:
+         if ep - best_ep >= patience: # Early stopping
             print(f"Early stopping at epoch {ep}")
             break
+         
+         gc.collect()
 
-      torch.save(best_model, f"./SNN/best_model.pth")
+      # torch.save(best_model, f"./SNN/best_model.pth")
 
-      return train_losses, accuracies, val_losses, best_ep, best_val_loss, accuracies[best_ep]
+      return train_losses, accuracies, val_losses, best_ep, best_val_loss#, accuracies[best_ep]
 
    def KL(self, alpha):
       beta = torch.ones((1, self.num_outputs), dtype=torch.float32, device=self.device)
@@ -143,14 +169,14 @@ class Net(nn.Module):
 
                with autocast():
                   logits = self(data)
-                  labels = nn.functional.one_hot(labels.to(torch.int64), num_classes=self.num_outputs).float()
+                  labels = labels.float()
                   loss = self.mse_loss(labels, logits, ep, num_epochs_annealing)
 
                   val_loss += loss
 
-                  acc = accuracy_score(logits.round().cpu(), labels.cpu())
+                  # acc = accuracy_score(logits.round().cpu(), labels.cpu())
 
-      return val_loss/len(val_data), float(acc)
+      return val_loss/len(val_data)#, float(acc)
 
    def predict_data(self, test_data):
       self.eval()
@@ -166,6 +192,6 @@ class Net(nn.Module):
                   logits = self(data)
 
                test_preds.append(logits.round().cpu().numpy().argmax())
-               test_labels.append(labels.int().item())
+               test_labels.append(labels.cpu().numpy().argmax())
 
       return test_preds, test_labels
