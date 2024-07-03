@@ -3,77 +3,15 @@ import torch.nn as nn
 import snntorch as snn
 import torch
 from tqdm.auto import tqdm
-from torch.cuda.amp import autocast
 import copy
 import numpy as np
-from sklearn.metrics import accuracy_score
 
 class Net(nn.Module):
-   def __init__(self, input_dim, hidden_dim, output_dim, num_steps, reset_mechanism='zero', device=None):
-      super().__init__()
-      assert reset_mechanism in ['zero', 'subtract'], "reset_mechanism must be either 'zero' or 'subtract'"
+   def __init__(self, device = None):
+       super().__init__()
+       self.device = device
 
-      self.hidden_dim = hidden_dim
-      self.num_outputs = output_dim
-      self.num_steps = num_steps
-      self.device = device
-
-      # initialize layers
-      self.antennas_fuse = nn.Conv2d(4, 1, (1,1))
-      self.hidden_linear = nn.Linear(input_dim, hidden_dim)
-      self.snn1 = snn.Leaky(.95, reset_mechanism=reset_mechanism) #, learn_beta=True, learn_threshold=True, reset_delay=False
-      self.snn2 = snn.Leaky(.95, reset_mechanism=reset_mechanism) #, learn_beta=True, learn_threshold=True, reset_delay=False
-
-      # self.time_fuse = nn.Conv1d(num_steps, 1, 1)
-      self.output_linear = nn.Linear(hidden_dim, output_dim)
-      self.softmax = nn.Softmax(dim=1)
-
-   def forward(self, x):
-      mem = self.snn1.init_leaky()
-      mem2 = self.snn2.init_leaky()
-
-      # spk_rec = []  # Record the output trace of spikes
-
-      if len(x.shape) < 4: x = x.unsqueeze(0)
-
-      x = x.permute(0, 3, 1, 2) # [batch, antennas, time, freq]
-      x = self.antennas_fuse(x) # fuse the 4 antennas into 1 channel
-      x = x.squeeze(1)
-
-      if x.shape[1] != self.num_steps:
-         x = x.view(x.shape[0], -1, self.num_steps, x.shape[2]) # [batch, time/steps, steps, freq]
-
-      for step in range(self.num_steps):
-         sn_input = x[:,:,step,:]
-         # sn_input = self.antennas_fuse(input.reshape(input.shape[0], input.shape[-1], input.shape[1], -1)) # fuse the 4 antennas into 1 channel
-         
-         # sn_input = self.hidden_linear(sn_input)
-
-         spk, mem = self.snn1(sn_input, mem)
-
-         # spk = self.hidden_linear(spk)
-         # spk, mem2 = self.snn2(spk, mem2)
-
-         # spk_rec.append(spk)
-         # mem1_rec.append(mem1)
-
-      # spk_rec = torch.stack(spk_rec, dim=2)
-      # fused_spikes = self.time_fuse(spk_rec)
-      # out = self.output_linear(fused_spikes.squeeze(1))
-
-      # hidden = spk_rec[-1]
-      hidden = self.hidden_linear(spk)
-
-      # spk2_rec = []
-      for step in range(hidden.shape[1]):
-         spk2, mem2 = self.snn2(hidden[:,step,:], mem2)
-         # spk2_rec.append(spk2)
-
-      out = self.output_linear(spk2)
-
-      return self.softmax(out)
-
-   def train_net(self, train_data, val_data, epochs, optimizer, scaler, num_epochs_annealing=22, patience=np.inf):
+   def train_net(self, train_data, val_data, epochs, optimizer, num_epochs_annealing=22, patience=np.inf):
 
       train_losses = []
       val_losses = []
@@ -89,19 +27,18 @@ class Net(nn.Module):
          for batch in train_data:
             optimizer.zero_grad()
 
-            data, labels = [b.to(self.device) for b in batch]
+            data, labels = batch
 
-            with autocast():
-               logits = self(data)
-               labels = labels.float()
-               loss = self.mse_loss(labels, logits, ep, num_epochs_annealing)
 
-            ep_loss += loss
+            logits = self(data.to(self.device))
+            labels = labels.float().to(self.device)
+            loss = self.loss(labels, logits, ep, num_epochs_annealing)
+
+            ep_loss += loss.item()
 
             # Backpropagation
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            loss.backward()
+            optimizer.step()
 
          train_losses.append(ep_loss/len(train_data))
 
@@ -114,7 +51,7 @@ class Net(nn.Module):
 
          if val_loss < best_val_loss:
             best_val_loss = val_loss
-            # best_model = copy.deepcopy(self.state_dict())
+            best_model = copy.deepcopy(self.state_dict())
             best_ep = ep
          
          if ep - best_ep >= patience: # Early stopping
@@ -123,40 +60,9 @@ class Net(nn.Module):
          
          gc.collect()
 
-      # torch.save(best_model, f"./SNN/best_model.pth")
+      self.load_state_dict(best_model)
 
       return train_losses, accuracies, val_losses, best_ep, best_val_loss#, accuracies[best_ep]
-
-   def KL(self, alpha):
-      beta = torch.ones((1, self.num_outputs), dtype=torch.float32, device=self.device)
-      S_alpha = torch.sum(alpha, dim=1, keepdim=True)
-      S_beta = torch.sum(beta, dim=1, keepdim=True)
-
-      lnB = torch.lgamma(S_alpha) - torch.sum(torch.lgamma(alpha), dim=1, keepdim=True)
-      lnB_uni = torch.sum(torch.lgamma(beta), dim=1, keepdim=True) - torch.lgamma(S_beta)
-
-      dg0 = torch.digamma(S_alpha)
-      dg1 = torch.digamma(alpha)
-
-      return torch.sum((alpha - beta) * (dg1 - dg0), dim=1, keepdim=True) + lnB + lnB_uni
-
-   # Loss function considering the expected squared error and the KL divergence
-   def mse_loss(self, target, pred, ep, num_epochs_annealing):
-      alpha = pred + 1
-      S = torch.sum(alpha, dim=1, keepdims=True)
-      m = alpha / S
-
-      # A + B minimises the sum of squared loss, see discussion in EDL paper for the derivation
-      A = torch.sum((target-m)**2, dim=1, keepdims=True)
-      B = torch.sum(alpha*(S-alpha)/(S*S*(S+1)), dim=1, keepdims=True)
-
-      # the lambda_t parameter, in this case min{1, t/10} with t the number of epochs
-      ll = min(1.0, float(ep/float(num_epochs_annealing)))
-
-      alp = pred*(1-target) + 1 
-      C =  ll * self.KL(alp)
-
-      return torch.mean(A + B + C) # mean over batch
 
    def eval_model(self, val_data, ep, num_epochs_annealing):
       self.eval()
@@ -167,12 +73,11 @@ class Net(nn.Module):
          for batch in val_data:
                data, labels = [b.to(self.device) for b in batch]
 
-               with autocast():
-                  logits = self(data)
-                  labels = labels.float()
-                  loss = self.mse_loss(labels, logits, ep, num_epochs_annealing)
+               logits = self(data)
+               labels = labels.float()
+               loss = self.loss(labels, logits, ep, num_epochs_annealing)
 
-                  val_loss += loss
+               val_loss += loss
 
                   # acc = accuracy_score(logits.round().cpu(), labels.cpu())
 
@@ -188,10 +93,139 @@ class Net(nn.Module):
          for batch in tqdm(test_data, total=len(test_data)):
                data, labels = [b.to(self.device) for b in batch]
 
-               with autocast():
-                  logits = self(data)
+               logits = self(data)
 
                test_preds.append(logits.round().cpu().numpy().argmax())
                test_labels.append(labels.cpu().numpy().argmax())
 
       return test_preds, test_labels
+   
+
+
+class CustomLoss(nn.Module):
+    def __init__(self, num_outputs, device):
+        super(CustomLoss, self).__init__()
+        self.num_outputs = num_outputs
+        self.device = device
+
+    def KL(self, alpha):
+        beta = torch.ones((1, self.num_outputs), dtype=torch.float32, device=self.device)
+        S_alpha = torch.sum(alpha, dim=1, keepdim=True)
+        S_beta = torch.sum(beta, dim=1, keepdim=True)
+
+        lnB = torch.lgamma(S_alpha) - torch.sum(torch.lgamma(alpha), dim=1, keepdim=True)
+        lnB_uni = torch.sum(torch.lgamma(beta), dim=1, keepdim=True) - torch.lgamma(S_beta)
+
+        dg0 = torch.digamma(S_alpha)
+        dg1 = torch.digamma(alpha)
+
+        return torch.sum((alpha - beta) * (dg1 - dg0), dim=1, keepdim=True) + lnB + lnB_uni
+
+    def forward(self, target, pred, ep, num_epochs_annealing):
+        alpha = pred + 1
+        S = torch.sum(alpha, dim=1, keepdims=True)
+        m = alpha / S
+
+        # A + B minimizes the sum of squared loss
+        A = torch.sum((target - m)**2, dim=1, keepdims=True)
+        B = torch.sum(alpha * (S - alpha) / (S * S * (S + 1)), dim=1, keepdims=True)
+
+        # lambda_t parameter
+        ll = min(1.0, float(ep) / float(num_epochs_annealing))
+
+        alp = pred * (1 - target) + 1
+        C = ll * self.KL(alp)
+
+        return torch.mean(A + B + C)
+    
+
+class SNNetwork(Net):
+   def __init__(self, hidden_dim, output_dim, num_steps, reset_mechanism='zero', device=None):
+      super().__init__(device=device)
+      assert reset_mechanism in ['zero', 'subtract'], "reset_mechanism must be either 'zero' or 'subtract'"
+
+      self.num_steps = num_steps
+
+      # initialize layers
+      self.antennas_fuse = nn.Conv2d(4, 1, (1,1))
+      self.hidden_linear = nn.Linear(2048, hidden_dim)
+      self.hidden_linear2 = nn.Linear(hidden_dim, hidden_dim)
+      self.hidden_linear3 = nn.Linear(hidden_dim, hidden_dim//2)
+      self.snn1 = snn.Leaky(.95, reset_mechanism=reset_mechanism, learn_beta=True, learn_threshold=True, reset_delay=False) #
+      self.snn2 = snn.Leaky(.95, reset_mechanism=reset_mechanism, learn_beta=True, learn_threshold=True, reset_delay=False) #
+      self.snn3 = snn.Leaky(.95, reset_mechanism=reset_mechanism, learn_beta=True, learn_threshold=True, reset_delay=False) #
+
+      # self.time_fuse = nn.Conv1d(num_steps, 1, 1)
+      self.output_linear = nn.Linear(hidden_dim//2, output_dim)
+      self.softmax = nn.Softmax(dim=1)
+
+      self.loss = CustomLoss(num_outputs=output_dim, device=device)
+
+   def forward(self, x):
+      mem = self.snn1.init_leaky()
+      mem2 = self.snn2.init_leaky()
+      mem3 = self.snn3.init_leaky()
+
+      if len(x.shape) < 4: x = x.unsqueeze(0)
+
+      x = x.permute(0, 3, 1, 2) # [batch, antennas, time, freq]
+      x = self.antennas_fuse(x) # fuse the 4 antennas into 1 channel averaging  the values
+      x = x.squeeze(1)
+
+      if x.shape[1] != self.num_steps:
+         x = x.view(x.shape[0], -1, self.num_steps, x.shape[2]) # [batch, time/steps, steps, freq]
+
+      x = self.hidden_linear(x)
+      for step in range(self.num_steps):
+         sn_input = x[:,:,step,:]
+         spk, mem = self.snn1(sn_input, mem)
+
+      hidden = nn.functional.relu(self.hidden_linear2(spk))
+
+      x = hidden.view(hidden.shape[0], -1, 2, hidden.shape[2])
+      for step in range(2):
+         spk2, mem2 = self.snn2(x[:,:,step,:], mem2)
+
+      hidden2 = nn.functional.relu(self.hidden_linear3(spk2))
+
+      for step in range(x.shape[1]):
+         spk3, mem3 = self.snn3(hidden2[:,step,:], mem3)
+
+      out = self.output_linear(spk3)
+
+      return self.softmax(out)
+   
+
+class CNNetwork(Net):
+   def __init__(self, output_dim, device=None):
+      super().__init__(device=device)
+
+      # initialize layers
+      self.hidden_conv = nn.Conv2d(4, 12, (3,5), stride=(2,2)) # [batch, 4, 30, 2048] -> [batch, 12, 14, 1022]
+      self.maxpool = nn.MaxPool2d((2,5)) # [batch, 12, 14, 1022] -> [batch, 12, 7, 204]
+      self.hidden_conv2 = nn.Conv2d(12, 24, (3,11), stride=(2,5)) # [batch, 12, 7, 204] -> [batch, 24, 3, 40]
+      self.maxpool2 = nn.MaxPool2d((1,2)) # [batch, 24, 3, 40] -> [batch, 24, 3, 20]
+      self.hidden_conv3 = nn.Conv2d(24, 50, (3,5), stride=(2,2)) # [batch, 24, 3, 20] -> [batch, 50, 1, 8]
+      
+      # self.hidden_conv = nn.Conv2d(4, 32, (5,8), stride=(5,8), padding='valid') # [batch, 4, 30, 2048] -> [batch, 32, 6, 256]
+      # self.hidden_conv2 = nn.Conv2d(32, 32, (3,8), stride=(3,8), padding='valid') # [batch, 32, 6, 256] -> [batch, 32, 2, 32]
+      # self.hidden_conv3 = nn.Conv2d(32, 32, (2,4), stride=(2,4), padding='valid') # [batch, 32, 2, 32] -> [batch, 32, 1, 8]
+      
+      self.flatten = nn.Flatten()
+      self.output_linear = nn.Linear(400, output_dim)
+      self.softmax = nn.Softmax(dim=1)
+      self.loss = CustomLoss(num_outputs=output_dim, device=device)
+
+   def forward(self, x):
+      if len(x.shape) < 4: x = x.unsqueeze(0)
+
+      x = x.permute(0, 3, 1, 2) # [batch, antennas, time, freq]
+
+      x = nn.functional.relu(self.hidden_conv(x))
+      x = self.maxpool(x)
+      x = nn.functional.relu(self.hidden_conv2(x)) 
+      x = self.maxpool2(x)
+      x = nn.functional.relu(self.hidden_conv3(x))
+      x = self.output_linear(self.flatten(x))
+
+      return self.softmax(x)
