@@ -6,6 +6,8 @@ import random
 from torch.utils.data import Dataset, DataLoader
 
 from network import SNNetwork, CNNetwork
+from spykeTorchNet import MyNetwork
+
 from sklearn.metrics import confusion_matrix, classification_report, ConfusionMatrixDisplay
 
 import optuna
@@ -18,7 +20,7 @@ torch.manual_seed(RANDOM_STATE)
 np.random.seed(RANDOM_STATE)
 
 # Set constants
-BATCH_SIZE = 25
+BATCH_SIZE = 35
 TIME_WINDOW = 1
 CSI_PER_SECOND = 30
 WINDOW_SIZE = int(TIME_WINDOW * CSI_PER_SECOND)
@@ -162,7 +164,7 @@ def parameter_tuning(trials=10):
     
 
 
-# Train the model with hyperparameter tuning
+# # Train the model with hyperparameter tuning
 # study = parameter_tuning(trials=10)
 
 # # Get the best hyperparameters and metrics
@@ -252,3 +254,32 @@ disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
 cmdisp = disp.plot(cmap="cividis")
 cmdisp.figure_.savefig("SNN/ConfMatCnn.png", bbox_inches='tight')
 
+
+
+# # train spiking model
+# model = MyNetwork(5, len(ACTIONS), device=device).to(device)
+# model.train_net(
+#     train,
+#     val,
+#     35,
+#     torch.optim.Adam(model.parameters(), lr=0.0001),
+#     num_epochs_annealing=24,
+#     patience=5
+# )
+
+# # Evaluate the model on test set
+# # Compute the predictions on the test set
+# preds, labels = model.predict_data(test)
+
+# # Print the classification report
+# print("Classification Report:")
+# print(classification_report(labels, preds, target_names=ACTIONS))
+
+# # Compute the confusion matrix
+# cm = confusion_matrix(labels, preds)
+
+# # Print the confusion matrix
+# print("Confusion Matrix:")
+# disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
+# cmdisp = disp.plot(cmap="cividis")
+# cmdisp.figure_.savefig("SNN/ConfMatSNN2.png", bbox_inches='tight')
