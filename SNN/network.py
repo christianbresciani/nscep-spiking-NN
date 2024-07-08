@@ -1,4 +1,5 @@
 import gc
+import pickle
 import torch.nn as nn
 import snntorch as snn
 import torch
@@ -61,6 +62,7 @@ class Net(nn.Module):
          gc.collect()
 
       self.load_state_dict(best_model)
+      pickle.dump(best_model, open(f'bestmodel{self.__class__}.pkl', 'wb'))
 
       return train_losses, accuracies, val_losses, best_ep, best_val_loss#, accuracies[best_ep]
 
@@ -71,15 +73,15 @@ class Net(nn.Module):
 
       with torch.no_grad():
          for batch in val_data:
-               data, labels = [b.to(self.device) for b in batch]
+            data, labels = [b.to(self.device) for b in batch]
 
-               logits = self(data)
-               labels = labels.float()
-               loss = self.loss(labels, logits, ep, num_epochs_annealing)
+            logits = self(data)
+            labels = labels.float()
+            loss = self.loss(labels, logits, ep, num_epochs_annealing)
 
-               val_loss += loss
+            val_loss += loss
 
-                  # acc = accuracy_score(logits.round().cpu(), labels.cpu())
+               # acc = accuracy_score(logits.round().cpu(), labels.cpu())
 
       return val_loss/len(val_data)#, float(acc)
 
@@ -91,12 +93,12 @@ class Net(nn.Module):
 
       with torch.no_grad():
          for batch in tqdm(test_data, total=len(test_data)):
-               data, labels = [b.to(self.device) for b in batch]
+            data, labels = [b.to(self.device) for b in batch]
 
-               logits = self(data)
+            logits = self(data)
 
-               test_preds.append(logits.round().cpu().numpy().argmax())
-               test_labels.append(labels.cpu().numpy().argmax())
+            test_preds.append(logits.round().cpu().numpy().argmax())
+            test_labels.append(labels.cpu().numpy().argmax())
 
       return test_preds, test_labels
    
@@ -200,19 +202,22 @@ class CNNetwork(Net):
    def __init__(self, output_dim, device=None):
       super().__init__(device=device)
 
+      # fuse antennas
+      self.antennas_fuse = nn.Conv2d(4, 1, (1,1))
+
       # initialize layers
-      self.hidden_conv = nn.Conv2d(4, 12, (3,5), stride=(2,2)) # [batch, 4, 30, 2048] -> [batch, 12, 14, 1022]
-      self.maxpool = nn.MaxPool2d((2,5)) # [batch, 12, 14, 1022] -> [batch, 12, 7, 204]
-      self.hidden_conv2 = nn.Conv2d(12, 24, (3,11), stride=(2,5)) # [batch, 12, 7, 204] -> [batch, 24, 3, 40]
-      self.maxpool2 = nn.MaxPool2d((1,2)) # [batch, 24, 3, 40] -> [batch, 24, 3, 20]
-      self.hidden_conv3 = nn.Conv2d(24, 50, (3,5), stride=(2,2)) # [batch, 24, 3, 20] -> [batch, 50, 1, 8]
+      self.hidden_conv = nn.Conv2d(1, 4, (3,5), stride=(2,2)) # [batch, 1, 30, 2048] -> [batch, 4 14, 1022]
+      self.maxpool = nn.MaxPool2d((2,5)) # [batch, 4, 14, 1022] -> [batch, 4, 7, 204]
+      self.hidden_conv2 = nn.Conv2d(4, 16, (3,11), stride=(2,5)) # [batch, 4, 7, 204] -> [batch, 16, 3, 40]
+      self.maxpool2 = nn.MaxPool2d((1,2)) # [batch, 24, 3, 40] -> [batch, 16, 3, 20]
+      self.hidden_conv3 = nn.Conv2d(16, 25, (3,5), stride=(2,2)) # [batch, 16, 3, 20] -> [batch, 25, 1, 8]
       
       # self.hidden_conv = nn.Conv2d(4, 32, (5,8), stride=(5,8), padding='valid') # [batch, 4, 30, 2048] -> [batch, 32, 6, 256]
       # self.hidden_conv2 = nn.Conv2d(32, 32, (3,8), stride=(3,8), padding='valid') # [batch, 32, 6, 256] -> [batch, 32, 2, 32]
       # self.hidden_conv3 = nn.Conv2d(32, 32, (2,4), stride=(2,4), padding='valid') # [batch, 32, 2, 32] -> [batch, 32, 1, 8]
       
       self.flatten = nn.Flatten()
-      self.output_linear = nn.Linear(400, output_dim)
+      self.output_linear = nn.Linear(200, output_dim)
       self.softmax = nn.Softmax(dim=1)
       self.loss = CustomLoss(num_outputs=output_dim, device=device)
 
@@ -220,7 +225,7 @@ class CNNetwork(Net):
       if len(x.shape) < 4: x = x.unsqueeze(0)
 
       x = x.permute(0, 3, 1, 2) # [batch, antennas, time, freq]
-
+      x = self.antennas_fuse(x)
       x = nn.functional.relu(self.hidden_conv(x))
       x = self.maxpool(x)
       x = nn.functional.relu(self.hidden_conv2(x)) 
