@@ -14,7 +14,6 @@ class Net(nn.Module):
 
    def train_net(self, train_data, val_data, epochs, optimizer, num_epochs_annealing=22, patience=np.inf):
 
-      train_losses = []
       val_losses = []
       accuracies = []
       best_val_loss = np.Inf
@@ -23,7 +22,6 @@ class Net(nn.Module):
 
       for ep in tqdm(range(epochs)):
          self.train()
-         ep_loss = 0.0
 
          for batch in train_data:
             optimizer.zero_grad()
@@ -33,15 +31,11 @@ class Net(nn.Module):
 
             logits = self(data.to(self.device))
             labels = labels.float().to(self.device)
-            loss = self.loss(labels, logits, ep, num_epochs_annealing)
-
-            ep_loss += loss.item()
+            loss = torch.mean(self.loss(labels, logits, ep, num_epochs_annealing))
 
             # Backpropagation
             loss.backward()
             optimizer.step()
-
-         train_losses.append(ep_loss/len(train_data))
 
          # Evaluation
          val_loss = self.eval_model(val_data, ep, num_epochs_annealing)
@@ -64,12 +58,12 @@ class Net(nn.Module):
       self.load_state_dict(best_model)
       pickle.dump(best_model, open(f'bestmodel{self.__class__}.pkl', 'wb'))
 
-      return train_losses, accuracies, val_losses, best_ep, best_val_loss#, accuracies[best_ep]
+      return accuracies, val_losses, best_ep, best_val_loss#, accuracies[best_ep]
 
    def eval_model(self, val_data, ep, num_epochs_annealing):
       self.eval()
 
-      val_loss = 0.0
+      val_loss = []
 
       with torch.no_grad():
          for batch in val_data:
@@ -83,7 +77,7 @@ class Net(nn.Module):
 
                # acc = accuracy_score(logits.round().cpu(), labels.cpu())
 
-      return val_loss/len(val_data)#, float(acc)
+      return torch.mean(torch.Tensor(val_loss).view(-1).to(self.device))#, float(acc)
 
    def predict_data(self, test_data):
       self.eval()
@@ -138,7 +132,7 @@ class CustomLoss(nn.Module):
         alp = pred * (1 - target) + 1
         C = ll * self.KL(alp)
 
-        return torch.mean(A + B + C)
+        return A + B + C
     
 
 class SNNetwork(Net):
@@ -150,12 +144,10 @@ class SNNetwork(Net):
 
       # initialize layers
       self.antennas_fuse = nn.Conv2d(4, 1, (1,1))
-      self.hidden_linear = nn.Linear(2048, hidden_dim)
-      self.hidden_linear2 = nn.Linear(hidden_dim, hidden_dim)
-      self.hidden_linear3 = nn.Linear(hidden_dim, hidden_dim//2)
+      self.hidden_linear1 = nn.Linear(2048, hidden_dim)
+      self.hidden_linear2 = nn.Linear(hidden_dim, hidden_dim//2)
       self.snn1 = snn.Leaky(.95, reset_mechanism=reset_mechanism, learn_beta=True, learn_threshold=True, reset_delay=False) #
       self.snn2 = snn.Leaky(.95, reset_mechanism=reset_mechanism, learn_beta=True, learn_threshold=True, reset_delay=False) #
-      self.snn3 = snn.Leaky(.95, reset_mechanism=reset_mechanism, learn_beta=True, learn_threshold=True, reset_delay=False) #
 
       # self.time_fuse = nn.Conv1d(num_steps, 1, 1)
       self.output_linear = nn.Linear(hidden_dim//2, output_dim)
@@ -166,7 +158,6 @@ class SNNetwork(Net):
    def forward(self, x):
       mem = self.snn1.init_leaky()
       mem2 = self.snn2.init_leaky()
-      mem3 = self.snn3.init_leaky()
 
       if len(x.shape) < 4: x = x.unsqueeze(0)
 
@@ -177,23 +168,17 @@ class SNNetwork(Net):
       if x.shape[1] != self.num_steps:
          x = x.view(x.shape[0], -1, self.num_steps, x.shape[2]) # [batch, time/steps, steps, freq]
 
-      x = self.hidden_linear(x)
+      x = self.hidden_linear1(x)
       for step in range(self.num_steps):
          sn_input = x[:,:,step,:]
          spk, mem = self.snn1(sn_input, mem)
 
-      hidden = nn.functional.relu(self.hidden_linear2(spk))
-
-      x = hidden.view(hidden.shape[0], -1, 2, hidden.shape[2])
-      for step in range(2):
-         spk2, mem2 = self.snn2(x[:,:,step,:], mem2)
-
-      hidden2 = nn.functional.relu(self.hidden_linear3(spk2))
+      hidden = self.hidden_linear2(spk)
 
       for step in range(x.shape[1]):
-         spk3, mem3 = self.snn3(hidden2[:,step,:], mem3)
+         spk2, mem2 = self.snn2(hidden[:,step,:], mem2)
 
-      out = self.output_linear(spk3)
+      out = self.output_linear(spk2)
 
       return self.softmax(out)
    
@@ -206,11 +191,11 @@ class CNNetwork(Net):
       self.antennas_fuse = nn.Conv2d(4, 1, (1,1))
 
       # initialize layers
-      self.hidden_conv = nn.Conv2d(1, 4, (3,5), stride=(2,2)) # [batch, 1, 30, 2048] -> [batch, 4 14, 1022]
-      self.maxpool = nn.MaxPool2d((2,5)) # [batch, 4, 14, 1022] -> [batch, 4, 7, 204]
-      self.hidden_conv2 = nn.Conv2d(4, 16, (3,11), stride=(2,5)) # [batch, 4, 7, 204] -> [batch, 16, 3, 40]
-      self.maxpool2 = nn.MaxPool2d((1,2)) # [batch, 24, 3, 40] -> [batch, 16, 3, 20]
-      self.hidden_conv3 = nn.Conv2d(16, 25, (3,5), stride=(2,2)) # [batch, 16, 3, 20] -> [batch, 25, 1, 8]
+      self.hidden_conv = nn.Conv2d(1, 4, (5,5), stride=(3,2)) # (3,5), stride=(2,2) 90 -> 32 -> 16 -> 6 -> 3 
+      self.maxpool = nn.MaxPool2d((2,5)) # (2,5)
+      self.hidden_conv2 = nn.Conv2d(4, 16, (5,11), stride=(2,5)) # (3,11), stride=(2,5)
+      self.maxpool2 = nn.MaxPool2d((2,2)) # (1,2)
+      self.hidden_conv3 = nn.Conv2d(16, 25, (3,5), stride=(2,2)) # (3,5), stride=(2,2)
       
       # self.hidden_conv = nn.Conv2d(4, 32, (5,8), stride=(5,8), padding='valid') # [batch, 4, 30, 2048] -> [batch, 32, 6, 256]
       # self.hidden_conv2 = nn.Conv2d(32, 32, (3,8), stride=(3,8), padding='valid') # [batch, 32, 6, 256] -> [batch, 32, 2, 32]
@@ -234,3 +219,53 @@ class CNNetwork(Net):
       x = self.output_linear(self.flatten(x))
 
       return self.softmax(x)
+
+
+
+class SNNetwork2(Net):
+   def __init__(self, hidden_dim, output_dim, num_steps, reset_mechanism='zero', device=None):
+      super().__init__(device=device)
+      assert reset_mechanism in ['zero', 'subtract'], "reset_mechanism must be either 'zero' or 'subtract'"
+
+      self.num_steps = num_steps
+
+      # initialize layers
+      self.antennas_fuse = nn.Conv2d(4, 1, (1,1))
+      self.hidden_linear1 = nn.Linear(2048, hidden_dim)
+      self.hidden_linear2 = nn.Linear(hidden_dim, 1)
+      self.snn1 = snn.Leaky(.95, reset_mechanism=reset_mechanism, learn_beta=True, learn_threshold=True, reset_delay=False)
+      self.snn2 = snn.Leaky(.95, reset_mechanism=reset_mechanism, learn_beta=True, learn_threshold=True, reset_delay=False)
+
+      # self.loss = CustomLoss(num_outputs=output_dim, device=device)
+
+   def forward(self, x):
+      mem = self.snn1.init_leaky()
+      mem2 = self.snn2.init_leaky()
+
+      if len(x.shape) < 4: x = x.unsqueeze(0)
+
+      x = x.permute(0, 3, 1, 2)
+      x = self.antennas_fuse(x)
+      x = x.squeeze(1)
+
+      if x.shape[1] != self.num_steps:
+         x = x.view(x.shape[0], 2, -1, self.num_steps, x.shape[2])
+
+      x = self.hidden_linear1(x)
+      spks = torch.zeros(x.shape[0], x.shape[1], x.shape[2], x.shape[3], x.shape[4], device=self.device) # [batch, 2, time/steps, steps, hdim]
+      for step in range(self.num_steps):
+         sn_input = x[:,:,:,step,:]
+         spk, mem = self.snn1(sn_input, mem)
+
+         spks[:,:,:,step,:] = spk
+      
+      hidden = self.hidden_linear2(spks.sum(dim=3))
+      hidden = hidden.squeeze(3) # [batch, 2, time/steps]
+      spks = torch.zeros(hidden.shape[0], hidden.shape[1], hidden.shape[2], device=self.device)
+
+      for step in range(hidden.shape[2]):
+         spk2, mem2 = self.snn2(hidden[:,:,step], mem2)
+
+         spks[:,:,step] = spk2
+
+      return spks

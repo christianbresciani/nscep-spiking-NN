@@ -80,12 +80,13 @@ def load_train_data():
     max_val = max([torch.max(train_csi), torch.max(val_csi)])
     train_csi = torch.true_divide(train_csi, max_val)
     val_csi = torch.true_divide(val_csi, max_val)
-    indices = torch.randperm(train_csi.size(0))
+    train_indices = torch.randperm(train_csi.size(0))
+    val_indices = torch.randperm(val_csi.size(0))
     gc.collect()
-    
+
     # create Datasets and DataLoaders
-    csi_trainset = CsiDataset(train_csi[indices], train_labels[indices])
-    csi_valset = CsiDataset(val_csi, val_labels)
+    csi_trainset = CsiDataset(train_csi[train_indices], train_labels[train_indices])
+    csi_valset = CsiDataset(val_csi[val_indices], val_labels[val_indices])
 
     csi_dataloader = DataLoader(csi_trainset, batch_size=BATCH_SIZE)
     csi_valloader = DataLoader(csi_valset, batch_size=BATCH_SIZE)
@@ -106,7 +107,7 @@ def test_net(model, test, name):
     # Save the confusion matrix
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
     cmdisp = disp.plot(cmap="cividis")
-    cmdisp.figure_.savefig(f"SNN/ConfMat{name}.png", bbox_inches='tight')
+    cmdisp.figure_.savefig(f"SNN/results/ConfMat{name}.png", bbox_inches='tight')
 
 def load_test_data(set=2):
     test_csi = torch.Tensor()
@@ -157,13 +158,13 @@ train, val = load_train_data()
 # Set the device
 device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
 
-modelSnn = SNNetwork(200, len(ACTIONS), 5, reset_mechanism='subtract', device=device).to(device)
+modelSnn = SNNetwork(50, len(ACTIONS), 2, reset_mechanism='subtract', device=device).to(device)
 modelSnn.train_net(
     train,
     val,
-    35,
-    torch.optim.Adam(modelSnn.parameters(), lr=0.0001),
-    num_epochs_annealing=24,
+    20,
+    torch.optim.Adam(modelSnn.parameters(), lr=0.0009053778099794136),
+    num_epochs_annealing=18,
     patience=5
 )
 
@@ -186,8 +187,8 @@ for set, name in zip([2, 6, 5, 4], ['Sub', 'Env', 'Day', 'Same']):
     # Load the test data
     test_set = load_test_data(set)
 
-    test_net(modelSnn, test_set, f'SNN{name}')
-    test_net(modelCnn, test_set, f'CNN{name}')
+    test_net(modelSnn, test_set, f'SNN{name}3s')
+    test_net(modelCnn, test_set, f'CNN{name}3s')
     print(f"Tested on {name} dataset")
     del test_set
     gc.collect()
