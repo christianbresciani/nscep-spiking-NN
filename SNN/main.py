@@ -1,5 +1,6 @@
 import torch
 import os
+import gc
 import pickle
 import numpy as np
 import random
@@ -21,7 +22,7 @@ np.random.seed(RANDOM_STATE)
 
 # Set constants
 BATCH_SIZE = 35
-TIME_WINDOW = 1
+TIME_WINDOW = 3
 CSI_PER_SECOND = 30
 WINDOW_SIZE = int(TIME_WINDOW * CSI_PER_SECOND)
 STARTS = range(0, 80*CSI_PER_SECOND-int(TIME_WINDOW*CSI_PER_SECOND))
@@ -33,7 +34,6 @@ class CsiDataset(Dataset):
 
         self.csi = data
         self.labels = labels
-
 
     def __len__(self):
         return self.csi.shape[0]
@@ -69,26 +69,28 @@ def prepare_data():
         # create labels for each window
         activity_label = ACTIONS.index(x)  # Labels depend on file
         labels = torch.nn.functional.one_hot(torch.Tensor(activity_label * np.ones(len(STARTS))).to(torch.int64), len(ACTIONS))
-
-        # Shuffle the data
-        indices = torch.randperm(csi.size(0))
-        shuffled_data = csi#[indices]
         
         # Split the data into training, validation, and test sets [79%, 8%, 13%]
-        train_csi = torch.cat([train_csi, shuffled_data[:1810]], dim=0)
+        train_csi = torch.cat([train_csi, csi[:1810]], dim=0)
         train_labels = torch.cat([train_labels, labels[:1810]], dim=0)
 
-        val_csi = torch.cat([val_csi, shuffled_data[1810:2010]], dim=0)
+        val_csi = torch.cat([val_csi, csi[1810:2010]], dim=0)
         val_labels = torch.cat([val_labels, labels[1810:2010]], dim=0)
 
-        test_csi = torch.cat([test_csi, shuffled_data[2010:]], dim=0)
+        test_csi = torch.cat([test_csi, csi[2010:]], dim=0)
         test_labels = torch.cat([test_labels, labels[2010:]], dim=0)
+
+        del labels, csi, data
+        gc.collect()
 
     # Normalize the CSI dataset
     max_val = max([torch.max(train_csi), torch.max(val_csi), torch.max(test_csi)])
     train_csi = torch.true_divide(train_csi, max_val)
+    gc.collect()
     val_csi = torch.true_divide(val_csi, max_val)
+    gc.collect()
     test_csi = torch.true_divide(test_csi, max_val)
+    gc.collect()
 
     indices = torch.randperm(train_csi.size(0))
 
@@ -113,16 +115,17 @@ def parameter_tuning(trials=10):
     patience = 5
     def objective(trial : optuna.Trial):
         # Define the search space for hyperparameters
-        lr = trial.suggest_float('lr', 1e-5, 1e-3, log=True)
+        step = trial.suggest_categorical('step', [2, 3, 5, 6, 10, 15])
+        lr = trial.suggest_float('lr', 1e-5, 1e-1, log=True)
         epochs = trial.suggest_int('epochs', 20, 40, step=5)
         hidden_dim = trial.suggest_int('hidden_dim', 50, 500, step=50)
-        epoch_annealing = trial.suggest_int('epoch_annealing', 15, 30)
+        epoch_annealing = trial.suggest_int('epoch_annealing', 12, 30)
         reset_mechanism = trial.suggest_categorical('reset_mechanism', ['zero', 'subtract'])
 
         # Set up the model
-        model = SNNetwork(hidden_dim, len(ACTIONS), int(WINDOW_SIZE/10), reset_mechanism=reset_mechanism, device=device).to(device)
+        model = SNNetwork(hidden_dim, len(ACTIONS), step, reset_mechanism=reset_mechanism, device=device).to(device)
         # Train the model
-        _, _, _, _, val_loss = model.train_net(
+        _, _, _, val_loss = model.train_net(
             train,
             val,
             epochs,
@@ -144,7 +147,7 @@ def parameter_tuning(trials=10):
         return val_loss
 
 
-    study_name = "snn-study"
+    study_name = "snn-study-3s"
     study_path = "SNN/optuna.log"
     storage_name = JournalStorage(JournalFileStorage(study_path))
     study = optuna.create_study(
@@ -164,8 +167,8 @@ def parameter_tuning(trials=10):
     
 
 
-# # Train the model with hyperparameter tuning
-# study = parameter_tuning(trials=10)
+# Train the model with hyperparameter tuning
+# study = parameter_tuning(trials=5)
 
 # # Get the best hyperparameters and metrics
 # best_params = study.best_params
@@ -184,8 +187,9 @@ def parameter_tuning(trials=10):
 # best_hidden_dim = best_params['hidden_dim']
 # best_epoch_annealing = best_params['epoch_annealing']
 # best_reset_mechanism = best_params['reset_mechanism']
+# best_step = best_params['step']
 
-# model = SNNetwork(best_hidden_dim, len(ACTIONS), int(WINDOW_SIZE/10), reset_mechanism=best_reset_mechanism, device=device).to(device)
+# model = SNNetwork(best_hidden_dim, len(ACTIONS), best_step, reset_mechanism=best_reset_mechanism, device=device).to(device)
 
 # model.train_net(
 #     train,
@@ -198,32 +202,32 @@ def parameter_tuning(trials=10):
 
 
 
-model = SNNetwork(200, len(ACTIONS), 5, reset_mechanism='subtract', device=device).to(device)
-model.train_net(
-    train,
-    val,
-    35,
-    torch.optim.Adam(model.parameters(), lr=0.0001),
-    num_epochs_annealing=24,
-    patience=5
-)
+# # model = SNNetwork(500, len(ACTIONS), 3, reset_mechanism='subtract', device=device).to(device)
+# # model.train_net(
+# #     train,
+# #     val,
+# #     40,
+# #     torch.optim.Adam(model.parameters(), lr=0.0002753224828555938),
+# #     num_epochs_annealing=18,
+# #     patience=5
+# # )
 
-# Evaluate the model on test set
-# Compute the predictions on the test set
-preds, labels = model.predict_data(test)
+# # Evaluate the model on test set
+# # Compute the predictions on the test set
+# preds, labels = model.predict_data(test)
 
-# Print the classification report
-print("Classification Report:")
-print(classification_report(labels, preds, target_names=ACTIONS))
+# # Print the classification report
+# print("Classification Report:")
+# print(classification_report(labels, preds, target_names=ACTIONS))
 
-# Compute the confusion matrix
-cm = confusion_matrix(labels, preds)
+# # Compute the confusion matrix
+# cm = confusion_matrix(labels, preds)
 
-# Print the confusion matrix
-print("Confusion Matrix:")
-disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
-cmdisp = disp.plot(cmap="cividis")
-cmdisp.figure_.savefig("SNN/ConMatSNN.png", bbox_inches='tight')
+# # Print the confusion matrix
+# print("Confusion Matrix:")
+# disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
+# cmdisp = disp.plot(cmap="cividis")
+# cmdisp.figure_.savefig("SNN/results/ConMatSNN3s.png", bbox_inches='tight')
 
 
 # train convolotional model
@@ -231,9 +235,9 @@ model = CNNetwork(len(ACTIONS), device=device).to(device)
 model.train_net(
     train,
     val,
-    35,
-    torch.optim.Adam(model.parameters(), lr=0.00005),
-    num_epochs_annealing=24,
+    40,
+    torch.optim.Adam(model.parameters(), lr=0.0007),
+    num_epochs_annealing=18,
     patience=5
 )
 
@@ -252,7 +256,7 @@ cm = confusion_matrix(labels, preds)
 print("Confusion Matrix:")
 disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
 cmdisp = disp.plot(cmap="cividis")
-cmdisp.figure_.savefig("SNN/ConfMatCnn.png", bbox_inches='tight')
+cmdisp.figure_.savefig("SNN/results/ConfMatCnn3s.png", bbox_inches='tight')
 
 
 
@@ -282,4 +286,4 @@ cmdisp.figure_.savefig("SNN/ConfMatCnn.png", bbox_inches='tight')
 # print("Confusion Matrix:")
 # disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
 # cmdisp = disp.plot(cmap="cividis")
-# cmdisp.figure_.savefig("SNN/ConfMatSNN2.png", bbox_inches='tight')
+# cmdisp.figure_.savefig("SNN/results/ConfMatSNN2.png", bbox_inches='tight')
