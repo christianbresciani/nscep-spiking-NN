@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch
 import numpy as np
 
-from network import CustomLoss, Net
+from networks import CustomLoss, Net
 
 class MyNetwork(Net):
     def __init__(self, num_step, num_classes, threshold=1.0, device = None):

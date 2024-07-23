@@ -6,7 +6,7 @@ import numpy as np
 import random
 from torch.utils.data import Dataset, DataLoader
 
-from network import SNNetwork, CNNetwork
+from networks import SNNetwork, CNNetwork
 from spykeTorchNet import MyNetwork
 
 from sklearn.metrics import confusion_matrix, classification_report, ConfusionMatrixDisplay
