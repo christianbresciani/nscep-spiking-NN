@@ -21,7 +21,7 @@ BATCH_SIZE = 25
 TIME_WINDOW = 3
 CSI_PER_SECOND = 30
 WINDOW_SIZE = int(TIME_WINDOW * CSI_PER_SECOND)
-TRAIN_STARTS = range(0, 80*CSI_PER_SECOND-int(TIME_WINDOW*CSI_PER_SECOND))
+TRAIN_STARTS = range(0, 80*CSI_PER_SECOND-int(TIME_WINDOW*CSI_PER_SECOND), int(TIME_WINDOW*CSI_PER_SECOND*.1))
 TEST_STARTS = range(0, 80*CSI_PER_SECOND-int(TIME_WINDOW*CSI_PER_SECOND), CSI_PER_SECOND)
 ACTIONS = ['A', 'B', 'C', 'G', 'H', 'J', 'K'] # [Walk, Run, Jump, Wave hands, Clapping, Wiping, Squat]
 
@@ -66,12 +66,13 @@ def load_train_data():
         activity_label = ACTIONS.index(x)  # Labels depend on file
         labels = torch.nn.functional.one_hot(torch.Tensor(activity_label * np.ones(len(TRAIN_STARTS))).to(torch.int64), len(ACTIONS))
 
+        sep = int(0.90 * len(csidata))
         # Split the data into training and validation sets
-        train_csi = torch.cat([train_csi, csidata[:2010]], dim=0)
-        train_labels = torch.cat([train_labels, labels[:2010]], dim=0)
+        train_csi = torch.cat([train_csi, csidata[:sep]], dim=0)
+        train_labels = torch.cat([train_labels, labels[:sep]], dim=0)
 
-        val_csi = torch.cat([val_csi, csidata[2010:]], dim=0)
-        val_labels = torch.cat([val_labels, labels[2010:]], dim=0)
+        val_csi = torch.cat([val_csi, csidata[sep:]], dim=0)
+        val_labels = torch.cat([val_labels, labels[sep:]], dim=0)
 
         del csidata, labels, datatrain
         gc.collect()
@@ -107,7 +108,7 @@ def test_net(model, test, name):
     # Save the confusion matrix
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
     cmdisp = disp.plot(cmap="cividis")
-    cmdisp.figure_.savefig(f"SNN/results/ConfMat{name}.png", bbox_inches='tight')
+    cmdisp.figure_.savefig(f"SNN/results/neuaralOnly/ConfMat{name}.png", bbox_inches='tight')
 
 def load_test_data(set=2):
     test_csi = torch.Tensor()

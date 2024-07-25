@@ -227,7 +227,7 @@ def parameter_tuning(trials=10):
 # print("Confusion Matrix:")
 # disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
 # cmdisp = disp.plot(cmap="cividis")
-# cmdisp.figure_.savefig("SNN/results/ConMatSNN3s.png", bbox_inches='tight')
+# cmdisp.figure_.savefig("SNN/results/neuralOnly/ConMatSNN3s.png", bbox_inches='tight')
 
 
 # train convolotional model
@@ -256,7 +256,7 @@ cm = confusion_matrix(labels, preds)
 print("Confusion Matrix:")
 disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
 cmdisp = disp.plot(cmap="cividis")
-cmdisp.figure_.savefig("SNN/results/ConfMatCnn3s.png", bbox_inches='tight')
+cmdisp.figure_.savefig("SNN/results/neuralOnly/ConfMatCnn3s.png", bbox_inches='tight')
 
 
 
@@ -286,4 +286,4 @@ cmdisp.figure_.savefig("SNN/results/ConfMatCnn3s.png", bbox_inches='tight')
 # print("Confusion Matrix:")
 # disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
 # cmdisp = disp.plot(cmap="cividis")
-# cmdisp.figure_.savefig("SNN/results/ConfMatSNN2.png", bbox_inches='tight')
+# cmdisp.figure_.savefig("SNN/results/neuralOnly/ConfMatSNN2.png", bbox_inches='tight')
