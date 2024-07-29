@@ -108,24 +108,67 @@ def prepare_data():
 train, test, loader = prepare_data()
 
 
-lr = 0.001
+lr = 0.0007
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-nn1 = CNNetwork(3)
+# nn1 = CNNetwork(3)
+# net1 = Network(nn1, "upper_legs_net", batching=True)
+# net1.cuda(device)
+# net1.optimizer = torch.optim.AdamW(nn1.parameters(), lr=lr)
+
+# nn2 = CNNetwork(2)
+# net2 = Network(nn2, "lower_legs_net", batching=True)
+# net2.cuda(device)
+# net2.optimizer = torch.optim.AdamW(nn2.parameters(), lr=lr)
+
+# nn3 = CNNetwork(4)
+# net3 = Network(nn3, "forearms_net", batching=True)
+# net3.cuda(device)
+# net3.optimizer = torch.optim.AdamW(nn3.parameters(), lr=lr)
+
+# model = Model("logic.pl", [net1, net2, net3])
+# model.add_tensor_source("train", train)
+# model.add_tensor_source("test", test)
+# model.set_engine(ExactEngine(model), cache=True)
+
+# trained_model = train_model(
+#     model,
+#     loader,
+#     StopOnPlateau("Accuracy", warm_up=5, patience=5) | Threshold("Accuracy", 1.0, duration=2) | EpochStop(30),
+#     log_iter=100,
+#     profile=0,
+# )
+# trained_model.logger.comment(
+#     "Accuracy {}".format(get_confusion_matrix(model, test, verbose=1).accuracy())
+# )
+# # save the confusion matrix
+# predictions, labels = predict(model, test, LABELS)
+# cm = confusion_matrix(labels, predictions)
+
+# disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=LABELS)
+# cmdisp = disp.plot(cmap="cividis")
+# cmdisp.figure_.savefig(f"SNN/results/neuroSymbolic/ConfMatCNN.png", bbox_inches='tight')
+
+
+# del model, trained_model, nn1, nn2, nn3, net1, net2, net3
+# gc.collect()
+
+
+
+lr = 0.001
+
+nn1 = SNNetwork(100, 10, 3)
 net1 = Network(nn1, "upper_legs_net", batching=True)
-net1.cuda(device)
-net1.optimizer = torch.optim.Adam(nn1.parameters(), lr=lr)
+net1.optimizer = torch.optim.AdamW(nn1.parameters(), lr=lr)
 
-nn2 = CNNetwork(2)
+nn2 = SNNetwork(100, 10, 2)
 net2 = Network(nn2, "lower_legs_net", batching=True)
-net2.cuda(device)
-net2.optimizer = torch.optim.Adam(nn2.parameters(), lr=lr)
+net2.optimizer = torch.optim.AdamW(nn2.parameters(), lr=lr)
 
-nn3 = CNNetwork(4)
+nn3 = SNNetwork(100, 10, 4)
 net3 = Network(nn3, "forearms_net", batching=True)
-net3.cuda(device)
-net3.optimizer = torch.optim.Adam(nn3.parameters(), lr=lr)
+net3.optimizer = torch.optim.AdamW(nn3.parameters(), lr=lr)
 
 model = Model("logic.pl", [net1, net2, net3])
 model.add_tensor_source("train", train)
@@ -135,47 +178,7 @@ model.set_engine(ExactEngine(model), cache=True)
 trained_model = train_model(
     model,
     loader,
-    StopOnPlateau("Accuracy", warm_up=5, patience=5) | Threshold("Accuracy", 1.0, duration=2) | EpochStop(10),
-    log_iter=100,
-    profile=0,
-)
-trained_model.logger.comment(
-    "Accuracy {}".format(get_confusion_matrix(model, test, verbose=1).accuracy())
-)
-# save the confusion matrix
-predictions, labels = predict(model, test)
-cm = confusion_matrix(labels, predictions)
-
-disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
-cmdisp = disp.plot(cmap="cividis")
-cmdisp.figure_.savefig(f"SNN/results/neuroSymbolic/ConfMatCNN.png", bbox_inches='tight')
-
-
-
-
-
-
-nn1 = SNNetwork(100, 9, 3)
-net1 = Network(nn1, "upper_legs_net", batching=True)
-net1.optimizer = torch.optim.Adam(nn1.parameters(), lr=lr)
-
-nn2 = SNNetwork(100, 9, 2)
-net2 = Network(nn2, "lower_legs_net", batching=True)
-net2.optimizer = torch.optim.Adam(nn2.parameters(), lr=lr)
-
-nn3 = SNNetwork(100, 9, 4)
-net3 = Network(nn3, "forearms_net", batching=True)
-net3.optimizer = torch.optim.Adam(nn3.parameters(), lr=lr)
-
-model = Model("logic.pl", [net1, net2, net3])
-model.add_tensor_source("train", train)
-model.add_tensor_source("test", test)
-model.set_engine(ExactEngine(model), cache=True)
-
-trained_model = train_model(
-    model,
-    loader,
-    StopOnPlateau("Accuracy", warm_up=15, patience=5) | Threshold("Accuracy", 1.0, duration=2) | EpochStop(20),
+    StopOnPlateau("Accuracy", warm_up=5, patience=5) | Threshold("Accuracy", 1.0, duration=2) | EpochStop(30),
     log_iter=100,
     profile=0,
 )
@@ -184,7 +187,7 @@ trained_model.logger.comment(
 )
 
 # save the confusion matrix
-predictions, labels = predict(model, test)
+predictions, labels = predict(model, test, LABELS)
 cm = confusion_matrix(labels, predictions)
 
 disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=LABELS)
