@@ -167,18 +167,25 @@ class SNNetwork(Net):
 
       if x.shape[1] != self.num_steps:
          x = x.view(x.shape[0], -1, self.num_steps, x.shape[2]) # [batch, time/steps, steps, freq]
-
+     
       x = self.hidden_linear1(x)
+      
+      spks = torch.zeros(x.shape[0], x.shape[1], x.shape[2], x.shape[3], device=self.device) # [batch, time/steps, steps, hdim]
       for step in range(self.num_steps):
          sn_input = x[:,:,step,:]
          spk, mem = self.snn1(sn_input, mem)
+         spks[:,:,step,:] = spk
 
-      hidden = self.hidden_linear2(spk)
+      hidden = self.hidden_linear2(spks.sum(dim=2))
+      # hidden = self.hidden_linear2(spk)
 
+      spks2 = torch.zeros(hidden.shape[0], hidden.shape[1], hidden.shape[2], device=self.device)
       for step in range(x.shape[1]):
          spk2, mem2 = self.snn2(hidden[:,step,:], mem2)
+         spks2[:,step,:] = spk2
 
-      out = self.output_linear(spk2)
+      out = self.output_linear(spks2.sum(dim=1))
+      # out = self.output_linear(spk2)
 
       return self.softmax(out)
    

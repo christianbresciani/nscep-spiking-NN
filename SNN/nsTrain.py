@@ -28,12 +28,16 @@ np.random.seed(RANDOM_STATE)
 
 # Set constants
 BATCH_SIZE = 35
-TIME_WINDOW = 3
+TIME_WINDOW = 1
 CSI_PER_SECOND = 30
 WINDOW_SIZE = int(TIME_WINDOW * CSI_PER_SECOND)
 STARTS = range(0, 80*CSI_PER_SECOND-int(TIME_WINDOW*CSI_PER_SECOND), int(TIME_WINDOW*CSI_PER_SECOND/30))
+TEST_STARTS = range(0, 80*CSI_PER_SECOND-int(TIME_WINDOW*CSI_PER_SECOND), CSI_PER_SECOND)
 ACTIONS = ['A', 'B', 'C', 'G', 'H', 'J', 'K'] # 
 LABELS = ['walk', 'run', 'jump', 'wave', 'clap', 'wipe', 'squat']
+
+TEST_ON_DIFFERENT_SETS = False
+TRAIN_SINGLE_ACTIVITY = False
 
 # Define the CSI dataset class
 class CsiDataset(Dataset):
@@ -105,6 +109,54 @@ def prepare_data():
 
     return csi_trainset, csi_testset, csi_dataloader
 
+
+def load_test_data(set=2):
+    test_csi = torch.Tensor()
+    test_labels = []
+
+    for x, label in zip(ACTIONS, LABELS):
+        if os.getcwd().split('/')[-1] == 'SNN':
+            os.chdir('..')
+
+        filetest = f'datasets/mean_dataset_abs/S{set}a_{x}.pkl'
+        # Load CSI data from pickle file
+        with open(filetest, 'rb') as f:
+            datatest = pickle.load(f)       # WARNING This code does not handle exceptions for simplicity exceptions would require keeping track of indices
+
+        # divide the 80s of data in 2310 windows of 3s
+        csidata = []
+        for start in TEST_STARTS:
+            csidata.append(datatest[start:start+WINDOW_SIZE, ...])
+
+        csidata = torch.Tensor(np.array(csidata))
+
+        test_csi = torch.cat([test_csi, csidata], dim=0)
+        test_labels = test_labels + [label] * len(csidata)
+
+    # Normalize the CSI dataset
+    max_val = torch.max(test_csi)
+    test_csi = torch.true_divide(test_csi, max_val)
+
+    csi_testset = CsiDataset([test_csi, test_labels], "test")
+
+    return csi_testset
+
+
+def test_net(model, test, name):
+    model.add_tensor_source("test", test)
+
+    # Compute the predictions
+    preds, labels = predict(model, test, LABELS)
+
+    # Compute the confusion matrix
+    cm = confusion_matrix(labels, preds)
+
+    # Save the confusion matrix
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
+    cmdisp = disp.plot(cmap="cividis")
+    cmdisp.figure_.savefig(f"SNN/results/neuroSymbolic/ConfMat{name}.png", bbox_inches='tight')
+
+
 train, test, loader = prepare_data()
 
 
@@ -112,49 +164,35 @@ lr = 0.0007
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-# nn1 = CNNetwork(3)
-# net1 = Network(nn1, "upper_legs_net", batching=True)
-# net1.cuda(device)
-# net1.optimizer = torch.optim.AdamW(nn1.parameters(), lr=lr)
+nn1 = CNNetwork(3)
+net1 = Network(nn1, "upper_legs_net", batching=True)
+net1.cuda(device)
+net1.optimizer = torch.optim.AdamW(nn1.parameters(), lr=lr)
 
-# nn2 = CNNetwork(2)
-# net2 = Network(nn2, "lower_legs_net", batching=True)
-# net2.cuda(device)
-# net2.optimizer = torch.optim.AdamW(nn2.parameters(), lr=lr)
+nn2 = CNNetwork(2)
+net2 = Network(nn2, "lower_legs_net", batching=True)
+net2.cuda(device)
+net2.optimizer = torch.optim.AdamW(nn2.parameters(), lr=lr)
 
-# nn3 = CNNetwork(4)
-# net3 = Network(nn3, "forearms_net", batching=True)
-# net3.cuda(device)
-# net3.optimizer = torch.optim.AdamW(nn3.parameters(), lr=lr)
+nn3 = CNNetwork(4)
+net3 = Network(nn3, "forearms_net", batching=True)
+net3.cuda(device)
+net3.optimizer = torch.optim.AdamW(nn3.parameters(), lr=lr)
 
-# model = Model("logic.pl", [net1, net2, net3])
-# model.add_tensor_source("train", train)
-# model.add_tensor_source("test", test)
-# model.set_engine(ExactEngine(model), cache=True)
+modelCnn = Model("logic.pl", [net1, net2, net3])
+modelCnn.add_tensor_source("train", train)
+modelCnn.set_engine(ExactEngine(modelCnn), cache=True)
 
-# trained_model = train_model(
-#     model,
-#     loader,
-#     StopOnPlateau("Accuracy", warm_up=5, patience=5) | Threshold("Accuracy", 1.0, duration=2) | EpochStop(30),
-#     log_iter=100,
-#     profile=0,
-# )
-# trained_model.logger.comment(
-#     "Accuracy {}".format(get_confusion_matrix(model, test, verbose=1).accuracy())
-# )
-# # save the confusion matrix
-# predictions, labels = predict(model, test, LABELS)
-# cm = confusion_matrix(labels, predictions)
+trained_model = train_model(
+    modelCnn,
+    loader,
+    StopOnPlateau("Accuracy", warm_up=5, patience=5) | Threshold("Accuracy", 1.0, duration=2) | EpochStop(30),
+    log_iter=100,
+    profile=0,
+)
 
-# disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=LABELS)
-# cmdisp = disp.plot(cmap="cividis")
-# cmdisp.figure_.savefig(f"SNN/results/neuroSymbolic/ConfMatCNN.png", bbox_inches='tight')
-
-
-# del model, trained_model, nn1, nn2, nn3, net1, net2, net3
-# gc.collect()
-
-
+del trained_model, nn1, nn2, nn3, net1, net2, net3
+gc.collect()
 
 lr = 0.001
 
@@ -170,26 +208,29 @@ nn3 = SNNetwork(100, 10, 4)
 net3 = Network(nn3, "forearms_net", batching=True)
 net3.optimizer = torch.optim.AdamW(nn3.parameters(), lr=lr)
 
-model = Model("logic.pl", [net1, net2, net3])
-model.add_tensor_source("train", train)
-model.add_tensor_source("test", test)
-model.set_engine(ExactEngine(model), cache=True)
+modelSnn = Model("logic.pl", [net1, net2, net3])
+modelSnn.add_tensor_source("train", train)
+modelSnn.add_tensor_source("test", test)
+modelSnn.set_engine(ExactEngine(modelSnn), cache=True)
 
 trained_model = train_model(
-    model,
+    modelSnn,
     loader,
     StopOnPlateau("Accuracy", warm_up=5, patience=5) | Threshold("Accuracy", 1.0, duration=2) | EpochStop(30),
     log_iter=100,
     profile=0,
 )
-trained_model.logger.comment(
-    "Accuracy {}".format(get_confusion_matrix(model, test, verbose=1).accuracy())
-)
 
-# save the confusion matrix
-predictions, labels = predict(model, test, LABELS)
-cm = confusion_matrix(labels, predictions)
+if TEST_ON_DIFFERENT_SETS:
+    for set, name in zip([2, 6, 5, 4], ['Sub', 'Env', 'Day', 'Same']):
+        # Load the test data
+        test_set = load_test_data(set)
 
-disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=LABELS)
-cmdisp = disp.plot(cmap="cividis")
-cmdisp.figure_.savefig(f"SNN/results/neuroSymbolic/ConfMatSNN.png", bbox_inches='tight')
+        test_net(modelSnn, test_set, f'SNN{name}1s')
+        test_net(modelCnn, test_set, f'CNN{name}1s')
+        print(f"Tested on {name} dataset")
+        del test_set
+        gc.collect()
+else:
+    test_net(modelCnn, test, 'CNN1s')
+    test_net(modelSnn, test, 'SNN1s')

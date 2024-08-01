@@ -21,7 +21,7 @@ BATCH_SIZE = 25
 TIME_WINDOW = 3
 CSI_PER_SECOND = 30
 WINDOW_SIZE = int(TIME_WINDOW * CSI_PER_SECOND)
-TRAIN_STARTS = range(0, 80*CSI_PER_SECOND-int(TIME_WINDOW*CSI_PER_SECOND), int(TIME_WINDOW*CSI_PER_SECOND*.1))
+TRAIN_STARTS = range(0, 80*CSI_PER_SECOND-int(TIME_WINDOW*CSI_PER_SECOND), int(TIME_WINDOW*CSI_PER_SECOND/30))
 TEST_STARTS = range(0, 80*CSI_PER_SECOND-int(TIME_WINDOW*CSI_PER_SECOND), CSI_PER_SECOND)
 ACTIONS = ['A', 'B', 'C', 'G', 'H', 'J', 'K'] # [Walk, Run, Jump, Wave hands, Clapping, Wiping, Squat]
 
@@ -108,7 +108,7 @@ def test_net(model, test, name):
     # Save the confusion matrix
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
     cmdisp = disp.plot(cmap="cividis")
-    cmdisp.figure_.savefig(f"SNN/results/neuaralOnly/ConfMat{name}.png", bbox_inches='tight')
+    cmdisp.figure_.savefig(f"SNN/results/neuralOnly/ConfMat{name}.png", bbox_inches='tight')
 
 def load_test_data(set=2):
     test_csi = torch.Tensor()
@@ -157,9 +157,9 @@ def load_test_data(set=2):
 train, val = load_train_data()
 
 # Set the device
-device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 
-modelSnn = SNNetwork(50, len(ACTIONS), 2, reset_mechanism='subtract', device=device).to(device)
+modelSnn = SNNetwork(100, len(ACTIONS), 10, reset_mechanism='subtract', device=device).to(device)
 modelSnn.train_net(
     train,
     val,
