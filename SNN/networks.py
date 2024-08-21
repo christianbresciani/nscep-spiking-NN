@@ -198,7 +198,7 @@ class CNNetwork(Net):
       self.antennas_fuse = nn.Conv2d(4, 1, (1,1))
 
       # initialize layers
-      self.hidden_conv = nn.Conv2d(1, 4, (5,5), stride=(2,2)) # (3,5), stride=(2,2) 90 -> 29 -> 14 -> 5 -> 2
+      self.hidden_conv = nn.Conv2d(1, 4, (5,5), stride=(2,2)) # (3,5), stride=(2,2)
       self.maxpool = nn.MaxPool2d((2,5)) # (2,5)
       self.hidden_conv2 = nn.Conv2d(4, 16, (5,11), stride=(3,5)) # (3,11), stride=(2,5)
       self.maxpool2 = nn.MaxPool2d((2,2)) # (1,2)

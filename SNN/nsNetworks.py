@@ -6,33 +6,51 @@ import snntorch as snn
 
 
 class CNNetwork(nn.Module):
-   def __init__(self, num_classes=2):
+   def __init__(self, num_classes=2, num_activities=1, time_window=1):
+      assert time_window in [1,3]
       super(CNNetwork, self).__init__()
-      self.final = nn.Sigmoid() if num_classes == 1 else nn.Softmax(1)
+      self.final = nn.Softmax(1) if num_activities == 1 else nn.Softmax(2)
       self.num_classes = num_classes
+      self.num_activities = num_activities
 
-      # Define the CNN layers and the classifier the comments are the values for 3s input
-      self.features = nn.Sequential(
-         nn.Conv2d(4, 1, (1,1)), # antennas fuse
-         nn.Conv2d(1, 4, (3,5), stride=(2,2)), # (5,5), stride=(2,2)
-         nn.ReLU(inplace=True),
-         nn.MaxPool2d((2,5)),
-         nn.Conv2d(4, 6, (3,11), stride=(2,5)), # (5,11), stride=(3,5)
-         nn.ReLU(inplace=True),
-         nn.MaxPool2d((1,2)), # (2,2)
-         nn.Conv2d(6, 8, (3,5), stride=(2,2)),
-         nn.ReLU(inplace=True),
-      )
+      if time_window == 1:
+         # Define the CNN layers and the classifier the comments are the values for 1s input
+         self.conv = nn.Sequential( # 4, 30, 2048
+            nn.Conv2d(4, 1, (1,1)), # 1, 30, 2048
+            nn.Conv2d(1, 4, (3,5), stride=(2,2)), # 4, 14, 1022
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d((2,5)), # 4, 7, 204
+            nn.Conv2d(4, 6, (3,11), stride=(2,5)), # 6, 3, 39
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d((1,2)), # 6, 3, 19
+            nn.Conv2d(6, 8, (3,5), stride=(2,2)), # 8, 1, 8
+         )
+      else:
+         # Define the CNN layers and the classifier the comments are the values for 3s input
+         self.conv = nn.Sequential( # 4, 90, 2048
+            nn.Conv2d(4, 1, (1,1)), # 1, 90, 2048
+            nn.Conv2d(1, 4, (5,5), stride=(2,2)), # 4, 43, 1022
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d((2,5)), # 4, 21, 204
+            nn.Conv2d(4, 6, (5,11), stride=(3,5)), # 6, 6, 39
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d((2,2)), # 6, 3, 19
+            nn.Conv2d(6, 8, (3,5), stride=(2,2)), # 8, 1, 8
+         )
 
-      self.classifier = nn.Sequential(     
-         nn.Flatten(),       
+      self.classifier = nn.Sequential(            
          nn.Linear(64, self.num_classes),
          self.final,
       )
 
-   def forward(self, x):
+   def forward(self, x: torch.Tensor) -> torch.Tensor:
       x = x.permute(0, 3, 1, 2)
-      x = self.features(x)
+      x = self.conv(x)
+      if self.num_activities == 1:
+         x = x.flatten(1)
+      else:
+         x = x.permute(0, 2, 1, 3)
+         x = x.flatten(2)
       x = self.classifier(x)
       return x
     

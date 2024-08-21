@@ -2,6 +2,7 @@ import gc
 import os
 import pickle
 import random
+import time
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -158,7 +159,7 @@ train, val = load_train_data()
 
 # Set the device
 device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
-
+start_time = time.time()
 modelSnn = SNNetwork(100, len(ACTIONS), 10, reset_mechanism='subtract', device=device).to(device)
 modelSnn.train_net(
     train,
@@ -168,8 +169,14 @@ modelSnn.train_net(
     num_epochs_annealing=18,
     patience=5
 )
+end_time = time.time()
+training_time = end_time - start_time
+print(f"Training time: {training_time} seconds")
+with open("SNN/results/training_time.txt", "a") as f:
+    f.write(f"SNN: {training_time} seconds\n")
 
 
+start_time = time.time()
 modelCnn = CNNetwork(len(ACTIONS), device=device).to(device)
 modelCnn.train_net(
     train,
@@ -179,6 +186,12 @@ modelCnn.train_net(
     num_epochs_annealing=24,
     patience=5
 )
+end_time = time.time()
+training_time = end_time - start_time
+print(f"Training time: {training_time} seconds")
+with(open("SNN/results/training_time.txt", "a")) as f:
+    f.write(f"CNN: {training_time} seconds\n")
+
 
 del train, val
 gc.collect()
