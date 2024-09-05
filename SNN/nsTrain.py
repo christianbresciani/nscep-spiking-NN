@@ -21,6 +21,9 @@ from problog.logic import Term, Constant
 from deepproblog.query import Query
 import time
 
+
+import cProfile
+
 # Set the random seed for reproducibility
 RANDOM_STATE = 42
 random.seed(RANDOM_STATE)
@@ -37,9 +40,7 @@ TEST_STARTS = range(0, 80*CSI_PER_SECOND-int(TIME_WINDOW*CSI_PER_SECOND), CSI_PE
 ACTIONS = ['A', 'B', 'C', 'G', 'H', 'J', 'K'] 
 LABELS = ['walk', 'run', 'jump', 'wave', 'clap', 'wipe', 'squat']
 
-TEST_ON_DIFFERENT_SETS = False
-TRAIN_SINGLE_ACTIVITY = True
-NUMBER_OF_ACTIVITIES = 1 if TRAIN_SINGLE_ACTIVITY else 3
+TEST_ON_DIFFERENT_SETS = True
 
 # Define the CSI dataset class
 class CsiDataset(Dataset):
@@ -105,12 +106,6 @@ def prepare_data():
     train_csi = train_csi[indices]
     train_labels = [train_labels[i] for i in indices]
 
-    if not TRAIN_SINGLE_ACTIVITY:
-        train_csi = train_csi.view(-1, NUMBER_OF_ACTIVITIES, train_csi.shape[1], train_csi.shape[2], train_csi.shape[3])
-        train_labels = [train_labels[i:i+NUMBER_OF_ACTIVITIES] for i in range(0, len(train_labels), NUMBER_OF_ACTIVITIES)]
-        test_csi = test_csi.view(-1, NUMBER_OF_ACTIVITIES, test_csi.shape[1], test_csi.shape[2], test_csi.shape[3])
-        test_labels = [test_labels[i:i+NUMBER_OF_ACTIVITIES] for i in range(0, len(test_labels), NUMBER_OF_ACTIVITIES)]
-
     # create Datasets and DataLoaders
     csi_trainset = CsiDataset([train_csi, train_labels], "train")
     csi_testset = CsiDataset([test_csi, test_labels], "test")
@@ -147,10 +142,6 @@ def load_test_data(set=2):
     max_val = torch.max(test_csi)
     test_csi = torch.true_divide(test_csi, max_val)
 
-    if not TRAIN_SINGLE_ACTIVITY:
-        test_csi = test_csi.view(-1, NUMBER_OF_ACTIVITIES, test_csi.shape[1], test_csi.shape[2], test_csi.shape[3])
-        test_labels = [test_labels[i:i+NUMBER_OF_ACTIVITIES] for i in range(0, len(test_labels), NUMBER_OF_ACTIVITIES)]
-
     csi_testset = CsiDataset([test_csi, test_labels], "test")
 
     return csi_testset
@@ -170,98 +161,105 @@ def test_net(model, test, name):
     cmdisp = disp.plot(cmap="cividis")
     cmdisp.figure_.savefig(f"SNN/results/neuroSymbolic/ConfMat{name}.png", bbox_inches='tight')
 
-
-train, test, loader = prepare_data()
-
-
-lr = 0.0007
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def main():
+    train, test, loader = prepare_data()
 
 
-nn1 = CNNetwork(3, NUMBER_OF_ACTIVITIES, TIME_WINDOW)
-net1 = Network(nn1, "upper_legs_net", batching=True)
-net1.cuda(device)
-net1.optimizer = torch.optim.AdamW(nn1.parameters(), lr=lr)
-
-nn2 = CNNetwork(2, NUMBER_OF_ACTIVITIES, TIME_WINDOW)
-net2 = Network(nn2, "lower_legs_net", batching=True)
-net2.cuda(device)
-net2.optimizer = torch.optim.AdamW(nn2.parameters(), lr=lr)
-
-nn3 = CNNetwork(4, NUMBER_OF_ACTIVITIES, TIME_WINDOW)
-net3 = Network(nn3, "forearms_net", batching=True)
-net3.cuda(device)
-net3.optimizer = torch.optim.AdamW(nn3.parameters(), lr=lr)
-
-modelCnn = Model("SNN/logic.pl", [net1, net2, net3])
-modelCnn.add_tensor_source("train", train)
-modelCnn.set_engine(ExactEngine(modelCnn), cache=True)
-
-start_time = time.time()
-
-trained_model = train_model(
-    modelCnn,
-    loader,
-    StopOnPlateau("Accuracy", warm_up=5, patience=5) | Threshold("Accuracy", 1.0, duration=2) | EpochStop(30),
-    log_iter=100,
-    profile=0,
-)
+    lr = 0.0007
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-end_time = time.time()
-training_time = end_time - start_time
-print(f"Training time: {training_time} seconds")
-with(open("SNN/results/training_time.txt", "a")) as f:
-    f.write(f"NS-CNN: {training_time} seconds\n")
+    nn1 = CNNetwork(3)
+    net1 = Network(nn1, "upper_legs_net", batching=True)
+    net1.cuda(device)
+    net1.optimizer = torch.optim.AdamW(nn1.parameters(), lr=lr)
 
-del trained_model, nn1, nn2, nn3, net1, net2, net3
-gc.collect()
+    nn2 = CNNetwork(2)
+    net2 = Network(nn2, "lower_legs_net", batching=True)
+    net2.cuda(device)
+    net2.optimizer = torch.optim.AdamW(nn2.parameters(), lr=lr)
 
-lr = 0.001
+    nn3 = CNNetwork(4)
+    net3 = Network(nn3, "forearms_net", batching=True)
+    net3.cuda(device)
+    net3.optimizer = torch.optim.AdamW(nn3.parameters(), lr=lr)
 
-nn1 = SNNetwork(100, 10, 3)
-net1 = Network(nn1, "upper_legs_net", batching=True)
-net1.optimizer = torch.optim.AdamW(nn1.parameters(), lr=lr)
+    modelCnn = Model("SNN/logic.pl", [net1, net2, net3])
+    modelCnn.add_tensor_source("train", train)
+    modelCnn.set_engine(ExactEngine(modelCnn), cache=True)
 
-nn2 = SNNetwork(100, 10, 2)
-net2 = Network(nn2, "lower_legs_net", batching=True)
-net2.optimizer = torch.optim.AdamW(nn2.parameters(), lr=lr)
+    start_time = time.time()
 
-nn3 = SNNetwork(100, 10, 4)
-net3 = Network(nn3, "forearms_net", batching=True)
-net3.optimizer = torch.optim.AdamW(nn3.parameters(), lr=lr)
-
-modelSnn = Model("SNN/logic.pl", [net1, net2, net3])
-modelSnn.add_tensor_source("train", train)
-modelSnn.add_tensor_source("test", test)
-modelSnn.set_engine(ExactEngine(modelSnn), cache=True)
-
-start_time = time.time()
-trained_model = train_model(
-    modelSnn,
-    loader,
-    StopOnPlateau("Accuracy", warm_up=5, patience=5) | Threshold("Accuracy", 1.0, duration=2) | EpochStop(30),
-    log_iter=100,
-    profile=0,
-)
-
-end_time = time.time()
-training_time = end_time - start_time
-print(f"Training time: {training_time} seconds")
-with(open("SNN/results/training_time.txt", "a")) as f:
-    f.write(f"NS-SNN: {training_time} seconds\n")
+    trained_model = train_model(
+        modelCnn,
+        loader,
+        StopOnPlateau("Accuracy", warm_up=5, patience=5) | Threshold("Accuracy", 1.0, duration=2) | EpochStop(30),
+        log_iter=100,
+        profile=0,
+    )
 
 
-if TEST_ON_DIFFERENT_SETS:
-    for set, name in zip([2, 6, 5, 4], ['Sub', 'Env', 'Day', 'Same']):
-        # Load the test data
-        test_set = load_test_data(set)
+    end_time = time.time()
+    training_time = end_time - start_time
+    print(f"Training time: {training_time} seconds")
+    with(open("SNN/results/training_time.txt", "a")) as f:
+        f.write(f"NS-CNN: {training_time} seconds\n")
 
-        test_net(modelSnn, test_set, f'SNN{name}1s')
-        test_net(modelCnn, test_set, f'CNN{name}1s')
-        print(f"Tested on {name} dataset")
-        del test_set
-        gc.collect()
-else:
-    test_net(modelCnn, test, 'CNN1s')
-    test_net(modelSnn, test, 'SNN1s')
+    del trained_model, nn1, nn2, nn3, net1, net2, net3
+    gc.collect()
+
+    lr = 0.001
+
+    nn1 = SNNetwork(100, 3, time_frame=10)
+    net1 = Network(nn1, "upper_legs_net", batching=True)
+    net1.optimizer = torch.optim.AdamW(nn1.parameters(), lr=lr)
+    net1.cuda(device)
+
+    nn2 = SNNetwork(100, 2, time_frame=10)
+    net2 = Network(nn2, "lower_legs_net", batching=True)
+    net2.optimizer = torch.optim.AdamW(nn2.parameters(), lr=lr)
+    net2.cuda(device)
+
+    nn3 = SNNetwork(100, 4, time_frame=10)
+    net3 = Network(nn3, "forearms_net", batching=True)
+    net3.optimizer = torch.optim.AdamW(nn3.parameters(), lr=lr)
+    net3.cuda(device)
+
+    modelSnn = Model("SNN/logic.pl", [net1, net2, net3])
+    modelSnn.add_tensor_source("train", train)
+    modelSnn.add_tensor_source("test", test)
+    modelSnn.set_engine(ExactEngine(modelSnn), cache=True)
+
+    start_time = time.time()
+    trained_model = train_model(
+        modelSnn,
+        loader,
+        StopOnPlateau("Accuracy", warm_up=5, patience=5) | Threshold("Accuracy", 1.0, duration=2) | EpochStop(30),
+        log_iter=100,
+        profile=0,
+    )
+
+    end_time = time.time()
+    training_time = end_time - start_time
+    print(f"Training time: {training_time} seconds")
+    with(open("SNN/results/training_time.txt", "a")) as f:
+        f.write(f"NS-SNN: {training_time} seconds\n")
+
+
+    if TEST_ON_DIFFERENT_SETS:
+        for set, name in zip([2, 6, 5, 4], ['Sub', 'Env', 'Day', 'Same']):
+            # Load the test data
+            test_set = load_test_data(set)
+
+            test_net(modelSnn, test_set, f'SNN{name}1s')
+            test_net(modelCnn, test_set, f'CNN{name}1s')
+            print(f"Tested on {name} dataset")
+            del test_set
+            gc.collect()
+    else:
+        test_net(modelCnn, test, 'CNN1s')
+        test_net(modelSnn, test, 'SNN1s')
+
+if __name__ == "__main__":
+    main()
+#     cProfile.run("main()", "profile_output_cnn.prof")
