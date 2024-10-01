@@ -40,7 +40,7 @@ TEST_STARTS = range(0, 80*CSI_PER_SECOND-int(TIME_WINDOW*CSI_PER_SECOND), CSI_PE
 ACTIONS = ['A', 'B', 'C', 'G', 'H', 'J', 'K'] 
 LABELS = ['walk', 'run', 'jump', 'wave', 'clap', 'wipe', 'squat']
 
-TEST_ON_DIFFERENT_SETS = True
+TEST_ON_DIFFERENT_SETS = False
 
 # Define the CSI dataset class
 class CsiDataset(Dataset):

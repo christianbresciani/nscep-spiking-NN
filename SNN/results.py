@@ -178,17 +178,17 @@ def main():
     nn1 = SNNetwork(100, 3, num_steps=10)
     net1 = Network(nn1, "upper_legs_net", batching=True)
     net1.optimizer = torch.optim.AdamW(nn1.parameters(), lr=lr)
-    # net1.cuda(device)
+    net1.cuda(device)
 
     nn2 = SNNetwork(100, 2, num_steps=10)
     net2 = Network(nn2, "lower_legs_net", batching=True)
     net2.optimizer = torch.optim.AdamW(nn2.parameters(), lr=lr)
-    # net2.cuda(device)
+    net2.cuda(device)
 
     nn3 = SNNetwork(100, 4, num_steps=10)
     net3 = Network(nn3, "forearms_net", batching=True)
     net3.optimizer = torch.optim.AdamW(nn3.parameters(), lr=lr)
-    # net3.cuda(device)
+    net3.cuda(device)
 
     modelSnn = Model("SNN/logic.pl", [net1, net2, net3])
     modelSnn.add_tensor_source("train", train)
