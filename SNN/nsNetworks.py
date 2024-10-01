@@ -114,15 +114,21 @@ def predict(model: Model, dataset: Dataset, labels: List[str]):
    model.eval()
    predictions = []
    actuals = []
+   probabilities = {label: [] for label in labels}
    for query in dataset.to_queries():
       test_query = query.variable_output()
       answer = model.solve([test_query])[0]
       actual = str(query.output_values()[0])
       max_ans = max(answer.result, key=lambda x: answer.result[x])
       predicted = str(max_ans.args[query.output_ind[0]])
+      try:
+         probabilities[predicted].append(answer.result[max_ans].item())
+      except:
+         probabilities[predicted].append(answer.result[max_ans])
+         continue
       predictions.append(labels.index(predicted))
       actuals.append(labels.index(actual))
-   return predictions, actuals
+   return predictions, actuals, probabilities
 
 
 

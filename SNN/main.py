@@ -1,3 +1,4 @@
+from matplotlib import pyplot as plt
 import torch
 import os
 import gc
@@ -7,7 +8,7 @@ import random
 from torch.utils.data import Dataset, DataLoader
 
 from networks import SNNetwork, CNNetwork
-from spykeTorchNet import MyNetwork
+from metrics import bayesianHypothesisTesting
 
 from sklearn.metrics import confusion_matrix, classification_report, ConfusionMatrixDisplay
 
@@ -22,11 +23,12 @@ np.random.seed(RANDOM_STATE)
 
 # Set constants
 BATCH_SIZE = 35
-TIME_WINDOW = 3
+TIME_WINDOW = 1
 CSI_PER_SECOND = 30
 WINDOW_SIZE = int(TIME_WINDOW * CSI_PER_SECOND)
 STARTS = range(0, 80*CSI_PER_SECOND-int(TIME_WINDOW*CSI_PER_SECOND))
-ACTIONS = ['A', 'B', 'C', 'G', 'H', 'J', 'K'] # [Walk, Run, Jump, Wave hands, Clapping, Wiping, Squat]
+ACTIONS = ['A', 'B', 'C', 'G', 'H', 'J', 'K'] # 
+LABELS = ['Walk', 'Run', 'Jump', 'Wave hands', 'Clapping', 'Wiping', 'Squat']
 
 # Define the CSI dataset class
 class CsiDataset(Dataset):
@@ -201,89 +203,141 @@ def parameter_tuning(trials=10):
 # )
 
 
-
-# # model = SNNetwork(500, len(ACTIONS), 3, reset_mechanism='subtract', device=device).to(device)
-# # model.train_net(
-# #     train,
-# #     val,
-# #     40,
-# #     torch.optim.Adam(model.parameters(), lr=0.0002753224828555938),
-# #     num_epochs_annealing=18,
-# #     patience=5
-# # )
-
-# # Evaluate the model on test set
-# # Compute the predictions on the test set
-# preds, labels = model.predict_data(test)
-
-# # Print the classification report
-# print("Classification Report:")
-# print(classification_report(labels, preds, target_names=ACTIONS))
-
-# # Compute the confusion matrix
-# cm = confusion_matrix(labels, preds)
-
-# # Print the confusion matrix
-# print("Confusion Matrix:")
-# disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
-# cmdisp = disp.plot(cmap="cividis")
-# cmdisp.figure_.savefig("SNN/results/neuralOnly/ConMatSNN3s.png", bbox_inches='tight')
-
-
-# train convolotional model
-model = CNNetwork(len(ACTIONS), device=device).to(device)
-model.train_net(
-    train,
-    val,
-    40,
-    torch.optim.Adam(model.parameters(), lr=0.0007),
-    num_epochs_annealing=18,
-    patience=5
-)
-
-# Evaluate the model on test set
-# Compute the predictions on the test set
-preds, labels = model.predict_data(test)
-
-# Print the classification report
-print("Classification Report:")
-print(classification_report(labels, preds, target_names=ACTIONS))
-
-# Compute the confusion matrix
-cm = confusion_matrix(labels, preds)
-
-# Print the confusion matrix
-print("Confusion Matrix:")
-disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
-cmdisp = disp.plot(cmap="cividis")
-cmdisp.figure_.savefig("SNN/results/neuralOnly/ConfMatCnn3s.png", bbox_inches='tight')
+def main():
+    while True:
+        model = SNNetwork(500, len(ACTIONS), 5, reset_mechanism='subtract', device=device).to(device)
+        res = model.train_net(
+            train,
+            val,
+            40,
+            torch.optim.Adam(model.parameters(), lr=0.0002),
+            num_epochs_annealing=18,
+            patience=5
+        )
+        if res[3] < 0.8: break
 
 
 
-# # train spiking model
-# model = MyNetwork(5, len(ACTIONS), device=device).to(device)
-# model.train_net(
-#     train,
-#     val,
-#     35,
-#     torch.optim.Adam(model.parameters(), lr=0.0001),
-#     num_epochs_annealing=24,
-#     patience=5
-# )
+    # Evaluate the model on test set
+    # Compute the predictions on the test set
+    preds, labels = model.predict_data(test)
 
-# # Evaluate the model on test set
-# # Compute the predictions on the test set
-# preds, labels = model.predict_data(test)
+    # Print the classification report
+    print("Classification Report:")
+    print(classification_report(labels, preds, target_names=LABELS))
 
-# # Print the classification report
-# print("Classification Report:")
-# print(classification_report(labels, preds, target_names=ACTIONS))
+    # Compute the confusion matrix
+    cmSNN = confusion_matrix(labels, preds)
 
-# # Compute the confusion matrix
-# cm = confusion_matrix(labels, preds)
+    # train convolotional model
+    model = CNNetwork(len(ACTIONS), device=device, last_cannel=65).to(device)
+    model.train_net(
+        train,
+        val,
+        35,
+        torch.optim.Adam(model.parameters(), lr=0.0003062326975389536),
+        num_epochs_annealing=27,
+        patience=5
+    )
 
-# # Print the confusion matrix
-# print("Confusion Matrix:")
-# disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
-# cmdisp = disp.plot(cmap="cividis")
-# cmdisp.figure_.savefig("SNN/results/neuralOnly/ConfMatSNN2.png", bbox_inches='tight')
+    # Evaluate the model on test set
+    # Compute the predictions on the test set
+    preds, labels = model.predict_data(test)
+
+    # Print the classification report
+    print("Classification Report:")
+    print(classification_report(labels, preds, target_names=LABELS))
+
+    # Compute the confusion matrix
+    cmCNN = confusion_matrix(labels, preds)
+
+    return cmSNN, cmCNN
+
+def optunaTrain():
+    # Define the objective function for Optuna
+    patience = 5
+    def objective(trial : optuna.Trial):
+        # Define the search space for hyperparameters
+        lr = trial.suggest_float('lr', 1e-7, 1e-2, log=True)
+        epochs = trial.suggest_int('epochs', 15, 40, step=5)
+        last_channel = trial.suggest_int('last_channel', 25, 90, step=5)
+        epoch_annealing = trial.suggest_int('epoch_annealing', 12, 30)
+
+        # Set up the model
+        model = CNNetwork(len(ACTIONS), device=device, last_cannel=last_channel).to(device)
+        # Train the model
+        _, _, _, val_loss = model.train_net(
+            train,
+            val,
+            epochs,
+            torch.optim.Adam(model.parameters(), lr=lr),
+            num_epochs_annealing=epoch_annealing,
+            patience=patience           # Early stopping patience, works after half of the epochs
+        )
+
+        # Report the metrics to Optuna
+        trial.report(val_loss, step=epochs)
+        # trial.report(-val_acc, step=epochs)
+
+        if trial.should_prune():
+            raise optuna.TrialPruned()
+        
+        torch.cuda.empty_cache()
+        
+        # Return the metrics for optimization
+        return val_loss
+
+
+    study_name = "cnn-study-1s"
+    study_path = "SNN/optuna.log"
+    storage_name = JournalStorage(JournalFileStorage(study_path))
+    study = optuna.create_study(
+        direction="minimize",
+        study_name=study_name,
+        storage=storage_name,
+        load_if_exists=True,
+        sampler=optuna.samplers.TPESampler(),
+        pruner=optuna.pruners.SuccessiveHalvingPruner()
+    )
+
+    # Create an Optuna study
+    # optuna.logging.set_verbosity(optuna.logging.DEBUG)
+    study.optimize(objective, n_trials=40, gc_after_trial=True)
+
+    return study
+
+
+if __name__ == "__main__":
+    # optunaTrain()
+    # quit()
+    cmSNN = np.zeros((len(LABELS), len(LABELS)), dtype=int)
+    cmCNN = np.zeros((len(LABELS), len(LABELS)), dtype=int)
+    for _ in range(10):
+        snn, cnn = main()
+        cmSNN += snn
+        cmCNN += cnn
+
+
+    # Print the confusion matrix
+    print("Confusion Matrix:")
+    disp = ConfusionMatrixDisplay(confusion_matrix=cmSNN, display_labels=LABELS)
+    cmdisp = disp.plot(cmap="cividis")
+    plt.setp(cmdisp.ax_.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+    plt.setp(cmdisp.ax_.get_yticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+    cmdisp.figure_.set_size_inches(12, 12)
+    cmdisp.figure_.savefig("SNN/results/neuralOnly/ConMatSNN1s.png", bbox_inches='tight')
+
+
+    # Print the confusion matrix
+    print("Confusion Matrix:")
+    disp = ConfusionMatrixDisplay(confusion_matrix=cmCNN, display_labels=LABELS)
+    cmdisp = disp.plot(cmap="cividis")
+    plt.setp(cmdisp.ax_.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+    plt.setp(cmdisp.ax_.get_yticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+    cmdisp.figure_.set_size_inches(12, 12)
+    cmdisp.figure_.savefig("SNN/results/neuralOnly/ConfMatCnn1s.png", bbox_inches='tight')
+
+    print(f'Accuracy SNN: {np.trace(cmSNN)/np.sum(cmSNN)}')
+    print(f'Accuracy CNN: {np.trace(cmCNN)/np.sum(cmCNN)}')
+
+    bayesianHypothesisTesting(cmSNN, cmCNN)

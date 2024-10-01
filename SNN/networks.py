@@ -49,7 +49,7 @@ class Net(nn.Module):
             best_model = copy.deepcopy(self.state_dict())
             best_ep = ep
          
-         if ep - best_ep >= patience: # Early stopping
+         if ep - best_ep >= patience and val_loss < 0.8: # Early stopping
             print(f"Early stopping at epoch {ep}")
             break
          
@@ -191,25 +191,26 @@ class SNNetwork(Net):
    
 
 class CNNetwork(Net):
-   def __init__(self, output_dim, device=None):
+   def __init__(self, output_dim, device=None, last_cannel=25):
       super().__init__(device=device)
+      channels = [last_cannel]
+      for i in range(1,4):
+         channels.append(int(channels[-1] / 1.5*i))
 
       # fuse antennas
       self.antennas_fuse = nn.Conv2d(4, 1, (1,1))
 
       # initialize layers
-      self.hidden_conv = nn.Conv2d(1, 4, (5,5), stride=(2,2)) # (3,5), stride=(2,2)
-      self.maxpool = nn.MaxPool2d((2,5)) # (2,5)
-      self.hidden_conv2 = nn.Conv2d(4, 16, (5,11), stride=(3,5)) # (3,11), stride=(2,5)
-      self.maxpool2 = nn.MaxPool2d((2,2)) # (1,2)
-      self.hidden_conv3 = nn.Conv2d(16, 25, (3,5), stride=(2,2)) # (3,5), stride=(2,2)
-      
-      # self.hidden_conv = nn.Conv2d(4, 32, (5,8), stride=(5,8), padding='valid') # [batch, 4, 30, 2048] -> [batch, 32, 6, 256]
-      # self.hidden_conv2 = nn.Conv2d(32, 32, (3,8), stride=(3,8), padding='valid') # [batch, 32, 6, 256] -> [batch, 32, 2, 32]
-      # self.hidden_conv3 = nn.Conv2d(32, 32, (2,4), stride=(2,4), padding='valid') # [batch, 32, 2, 32] -> [batch, 32, 1, 8]
+      self.hidden_conv = nn.Conv2d(1, channels[3], (3,5), stride=(1,2)) # 30 -> 28, 2048 -> 1022
+      self.maxpool = nn.MaxPool2d((2,4)) # 14 -> 14, 1022 -> 255
+      self.hidden_conv2 = nn.Conv2d(channels[3], channels[2], (3,9), stride=(1,5)) # 14 -> 12, 255 -> 50
+      self.maxpool2 = nn.MaxPool2d((2,2)) # 12 -> 6, 50 -> 25
+      self.hidden_conv3 = nn.Conv2d(channels[2], channels[1], (4,5), stride=(1,2)) # 6 -> 3, 25 -> 11
+      self.hidden_conv4 = nn.Conv2d(channels[1], channels[0], (3,5)) # 3 -> 1, 11 -> 7
       
       self.flatten = nn.Flatten()
-      self.output_linear = nn.Linear(200, output_dim)
+      self.hidden_linear = nn.Linear(last_cannel*7, last_cannel)
+      self.output_linear = nn.Linear(last_cannel, output_dim)
       self.softmax = nn.Softmax(dim=1)
       self.loss = CustomLoss(num_outputs=output_dim, device=device)
 
@@ -223,7 +224,10 @@ class CNNetwork(Net):
       x = nn.functional.relu(self.hidden_conv2(x)) 
       x = self.maxpool2(x)
       x = nn.functional.relu(self.hidden_conv3(x))
-      x = self.output_linear(self.flatten(x))
+      x = nn.functional.relu(self.hidden_conv4(x))
+      x = self.flatten(x)
+      x = nn.functional.relu(self.hidden_linear(x))
+      x = self.output_linear(x)
 
       return self.softmax(x)
 

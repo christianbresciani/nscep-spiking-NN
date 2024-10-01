@@ -1,9 +1,12 @@
+from matplotlib import pyplot as plt
 import torch
 import os
 import gc
 import pickle
 import numpy as np
 import random
+
+from metrics import bayesianHypothesisTesting
 
 from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
 
@@ -35,12 +38,17 @@ BATCH_SIZE = 35
 TIME_WINDOW = 1.5
 CSI_PER_SECOND = 30
 WINDOW_SIZE = int(TIME_WINDOW * CSI_PER_SECOND)
-STARTS = range(0, 80*CSI_PER_SECOND-int(TIME_WINDOW*CSI_PER_SECOND), int(TIME_WINDOW*CSI_PER_SECOND/30))
-TEST_STARTS = range(0, 80*CSI_PER_SECOND-int(TIME_WINDOW*CSI_PER_SECOND), CSI_PER_SECOND)
-ACTIONS = ['A', 'K'] 
-LABELS = ['walk', 'squat']
 
 TEST_ON_DIFFERENT_SETS = False
+if TEST_ON_DIFFERENT_SETS:
+    TRAIN_STARTS = range(0, 80*CSI_PER_SECOND-int(TIME_WINDOW*CSI_PER_SECOND), int(TIME_WINDOW*CSI_PER_SECOND/15))
+    TEST_STARTS = range(0, 80*CSI_PER_SECOND-int(TIME_WINDOW*CSI_PER_SECOND), int(CSI_PER_SECOND/30))
+else:
+    TRAIN_STARTS = range(0, 60*CSI_PER_SECOND-int(TIME_WINDOW*CSI_PER_SECOND), int(TIME_WINDOW*CSI_PER_SECOND/15))
+    TEST_STARTS = range(60*CSI_PER_SECOND, 80*CSI_PER_SECOND-int(TIME_WINDOW*CSI_PER_SECOND), int(TIME_WINDOW*CSI_PER_SECOND/3))
+
+ACTIONS = ['A', 'K'] 
+LABELS = ['walk', 'squat']
 
 # Define the CSI dataset class
 class CsiDataset(Dataset):
@@ -79,28 +87,30 @@ def prepare_data():
             data = pickle.load(f)       # WARNING This code does not handle exceptions for simplicity exceptions would require keeping track of indices
 
         # divide the 80s of data in 2310 windows of 3s
-        csi = []
-        for start in STARTS:
-            csi.append(data[start:start+WINDOW_SIZE, ...])
-        csi = torch.Tensor(np.array(csi))
+        train = []
+        for start in TRAIN_STARTS:
+            train.append(data[start:start+WINDOW_SIZE, ...])
+        train = torch.Tensor(np.array(train))
+
+        test = []
+        for start in TEST_STARTS:
+            test.append(data[start:start+WINDOW_SIZE, ...])
+        test = torch.Tensor(np.array(test))
         
         # Split the data into training and test sets [80%, 20%]
-        sep = int(0.8 * len(csi))
-        train_csi = torch.cat([train_csi, csi[:sep]], dim=0)
-        train_labels += [label] * sep 
+        train_csi = torch.cat([train_csi, train], dim=0)
+        train_labels += [label] * len(train) 
 
-        test_csi = torch.cat([test_csi, csi[sep:]], dim=0)
-        test_labels += [label] * (len(csi) - sep)
+        test_csi = torch.cat([test_csi, test], dim=0)
+        test_labels += [label] * len(test)
 
-        del csi, data
+        del train, test, data
         gc.collect()
 
     # Normalize the CSI dataset
     max_val = max([torch.max(train_csi), torch.max(test_csi)])
     train_csi = torch.true_divide(train_csi, max_val)
-    gc.collect()
     test_csi = torch.true_divide(test_csi, max_val)
-    gc.collect()
 
     indices = torch.randperm(train_csi.size(0))
     train_csi = train_csi[indices]
@@ -151,7 +161,7 @@ def test_net(model, test, name):
     model.add_tensor_source("test", test)
 
     # Compute the predictions
-    preds, labels = predict(model, test, LABELS)
+    preds, labels, probabilities = predict(model, test, LABELS)
 
     # Compute the confusion matrix
     cm = confusion_matrix(labels, preds)
@@ -160,6 +170,9 @@ def test_net(model, test, name):
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
     cmdisp = disp.plot(cmap="cividis")
     cmdisp.figure_.savefig(f"SNN/results/neuroSymbolic/ConfMat{name}.png", bbox_inches='tight')
+
+    return cm, probabilities
+
 
 def main():
     train, test, loader = prepare_data()
@@ -266,14 +279,30 @@ def main():
             # Load the test data
             test_set = load_test_data(set)
 
-            test_net(modelSnn, test_set, f'SNN{name}1s')
-            test_net(modelCnn, test_set, f'CNN{name}1s')
+            test_net(modelSnn, test_set, f'SNNtemp{name}1s')
+            test_net(modelCnn, test_set, f'CNNtemp{name}1s')
             print(f"Tested on {name} dataset")
             del test_set
             gc.collect()
     else:
-        test_net(modelCnn, test, 'CNNtemp')
-        test_net(modelSnn, test, 'SNNtemp')
+        cmCNN, probabilitiesCNN = test_net(modelCnn, test, 'CNNtemp')
+        cmSNN, probabilitiesSNN = test_net(modelSnn, test, 'SNNtemp')
+
+        for name in probabilitiesCNN.keys():
+            plt.figure()
+            x = np.arange(1.5, 20, 0.5) 
+            probabilities = {'SNN': probabilitiesSNN[name], 'CNN': probabilitiesCNN[name]}
+            for label, y in probabilities.items():
+                plt.plot(x, y, label=label)
+
+            plt.xlabel('Time (s)')
+            plt.ylabel('Probability')
+            plt.title('Probabilities over time')
+            plt.ylim(0, 1)
+            plt.xlim(0, 20)
+            plt.legend()
+            plt.savefig(f"SNN/results/neuroSymbolic/Probabilities{name}.png", bbox_inches='tight')
+        bayesianHypothesisTesting(cmSNN, cmCNN, len(test))
 
 
 if __name__ == "__main__":
