@@ -6,7 +6,7 @@ import pickle
 import numpy as np
 import random
 
-from metrics import bayesianHypothesisTesting
+from metrics import bayesianHypothesisTesting, bayesian_hypothesis_testing
 
 from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
 
@@ -164,10 +164,13 @@ def test_net(model, test, name):
     preds, labels, probabilities = predict(model, test, LABELS)
 
     # Compute the confusion matrix
-    cm = confusion_matrix(labels, preds)
+    cm = np.zeros((len(LABELS)+1, len(LABELS)+1), dtype=int)
+    assert len(preds) == len(labels)
+    for true, pred in zip(labels, preds):
+        cm[true, pred] += 1
 
     # Save the confusion matrix
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ACTIONS+['None'])
     cmdisp = disp.plot(cmap="cividis")
     cmdisp.figure_.savefig(f"SNN/results/neuroSymbolic/ConfMat{name}.png", bbox_inches='tight')
 
@@ -302,7 +305,7 @@ def main():
             plt.xlim(0, 20)
             plt.legend()
             plt.savefig(f"SNN/results/neuroSymbolic/Probabilities{name}.png", bbox_inches='tight')
-        bayesianHypothesisTesting(cmSNN, cmCNN, len(test))
+        bayesian_hypothesis_testing(cmSNN, cmCNN)
 
 
 if __name__ == "__main__":

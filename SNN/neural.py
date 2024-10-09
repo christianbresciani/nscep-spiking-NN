@@ -8,7 +8,7 @@ import random
 from torch.utils.data import Dataset, DataLoader
 
 from networks import SNNetwork, CNNetwork
-from metrics import bayesianHypothesisTesting
+from metrics import bayesianHypothesisTesting, bayesian_hypothesis_testing
 
 from sklearn.metrics import confusion_matrix, classification_report, ConfusionMatrixDisplay
 
@@ -149,7 +149,7 @@ def parameter_tuning(trials=10):
         return val_loss
 
 
-    study_name = "snn-study-3s"
+    study_name = "snn-study-1s"
     study_path = "SNN/optuna.log"
     storage_name = JournalStorage(JournalFileStorage(study_path))
     study = optuna.create_study(
@@ -204,17 +204,16 @@ def parameter_tuning(trials=10):
 
 
 def main():
-    while True:
-        model = SNNetwork(500, len(ACTIONS), 5, reset_mechanism='subtract', device=device).to(device)
-        res = model.train_net(
-            train,
-            val,
-            40,
-            torch.optim.Adam(model.parameters(), lr=0.0002),
-            num_epochs_annealing=18,
-            patience=5
-        )
-        if res[3] < 0.8: break
+    
+    model = SNNetwork(50, len(ACTIONS), 5, reset_mechanism='subtract', device=device).to(device)
+    res = model.train_net(
+        train,
+        val,
+        35,
+        torch.optim.Adam(model.parameters(), lr=0.006540246981917088),
+        num_epochs_annealing=30,
+        patience=5
+    )
 
 
 
@@ -263,17 +262,20 @@ def optunaTrain():
         last_channel = trial.suggest_int('last_channel', 25, 90, step=5)
         epoch_annealing = trial.suggest_int('epoch_annealing', 12, 30)
 
-        # Set up the model
-        model = CNNetwork(len(ACTIONS), device=device, last_cannel=last_channel).to(device)
-        # Train the model
-        _, _, _, val_loss = model.train_net(
-            train,
-            val,
-            epochs,
-            torch.optim.Adam(model.parameters(), lr=lr),
-            num_epochs_annealing=epoch_annealing,
-            patience=patience           # Early stopping patience, works after half of the epochs
-        )
+        while True:
+            # Set up the model
+            model = CNNetwork(len(ACTIONS), device=device, last_cannel=last_channel).to(device)
+            # Train the model
+            _, _, _, val_loss = model.train_net(
+                train,
+                val,
+                epochs,
+                torch.optim.Adam(model.parameters(), lr=lr),
+                num_epochs_annealing=epoch_annealing,
+                patience=patience           # Early stopping patience, works after half of the epochs
+            )
+            
+            if val_loss < 0.8: break
 
         # Report the metrics to Optuna
         trial.report(val_loss, step=epochs)
@@ -309,6 +311,7 @@ def optunaTrain():
 
 if __name__ == "__main__":
     # optunaTrain()
+    # parameter_tuning(40)
     # quit()
     cmSNN = np.zeros((len(LABELS), len(LABELS)), dtype=int)
     cmCNN = np.zeros((len(LABELS), len(LABELS)), dtype=int)
@@ -340,4 +343,6 @@ if __name__ == "__main__":
     print(f'Accuracy SNN: {np.trace(cmSNN)/np.sum(cmSNN)}')
     print(f'Accuracy CNN: {np.trace(cmCNN)/np.sum(cmCNN)}')
 
-    bayesianHypothesisTesting(cmSNN, cmCNN)
+    # bayesianHypothesisTesting(cmSNN, cmCNN)
+
+    bayesian_hypothesis_testing(cmSNN, cmCNN)

@@ -5,7 +5,7 @@ import gc
 import pickle
 import numpy as np
 import random
-from metrics import bayesianHypothesisTesting
+from metrics import bayesian_hypothesis_testing, bayesianHypothesisTesting
 from deepprobhar import main as deepprobhar
 
 
@@ -247,5 +247,7 @@ if __name__ == "__main__":
     print(f'Accuracy SNN: {np.trace(cmSNN)/np.sum(cmSNN)}')
     print(f'Accuracy CNN: {np.trace(cmVAE)/np.sum(cmVAE)}')
 
-    bayesianHypothesisTesting(cmSNN, cmVAE)
+    # bayesianHypothesisTesting(cmSNN, cmVAE)
+
+    bayesian_hypothesis_testing(cmSNN, cmVAE)
 

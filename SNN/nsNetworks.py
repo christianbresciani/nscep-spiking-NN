@@ -125,8 +125,11 @@ def predict(model: Model, dataset: Dataset, labels: List[str]):
          probabilities[predicted].append(answer.result[max_ans].item())
       except:
          probabilities[predicted].append(answer.result[max_ans])
-         continue
-      predictions.append(labels.index(predicted))
+
+      if probabilities[predicted][-1] > 0.5:
+         predictions.append(labels.index(predicted))
+      else:
+         predictions.append(len(labels))
       actuals.append(labels.index(actual))
    return predictions, actuals, probabilities
 
