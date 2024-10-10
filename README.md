@@ -2,7 +2,7 @@
 
 This repository hosts the code used in the following thesys:
 
-- Christian Bresciani....
+- Christian Bresciani, Approaches to human activity recognition via passive radar
 
 The code is provided under an MIT license.
 Please consider citing the above works if you use the code in this repository.
